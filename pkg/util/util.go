@@ -25,12 +25,15 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"k8s.io/klog"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	"github.com/kubeedge/kubeedge/common/constants"
 )
 
 //AddressFamily is uint type var to describe family ips
@@ -236,7 +239,6 @@ func GetMatchingGlobalIP(addrs []net.Addr, family AddressFamily) (net.IP, error)
 			} else {
 				klog.Infof("%v is not an IPv%d address", ip, int(family))
 			}
-
 		}
 	}
 	return nil, nil
@@ -513,4 +515,29 @@ func ReadDirNoStat(dirname string) ([]string, error) {
 	defer f.Close()
 
 	return f.Readdirnames(-1)
+}
+
+func SpliceErrors(errors []error) string {
+	if len(errors) == 0 {
+		return ""
+	}
+	var stb strings.Builder
+	stb.WriteString("[\n")
+	for _, err := range errors {
+		stb.WriteString(fmt.Sprintf("  %s\n", err.Error()))
+	}
+	stb.WriteString("]\n")
+	return stb.String()
+}
+
+// GetPodSandboxImage return snadbox image name based on arch, default image is for amd64.
+func GetPodSandboxImage() string {
+	switch runtime.GOARCH {
+	case "arm":
+		return constants.DefaultArmPodSandboxImage
+	case "arm64":
+		return constants.DefaultArm64PodSandboxImage
+	default:
+		return constants.DefaultPodSandboxImage
+	}
 }

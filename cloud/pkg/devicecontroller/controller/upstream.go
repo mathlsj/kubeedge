@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"context"
 	"encoding/json"
 	"strconv"
 
@@ -25,7 +26,7 @@ import (
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
-	"github.com/kubeedge/kubeedge/cloud/pkg/apis/devices/v1alpha1"
+	"github.com/kubeedge/kubeedge/cloud/pkg/apis/devices/v1alpha2"
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/config"
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/constants"
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/messagelayer"
@@ -35,7 +36,7 @@ import (
 
 // DeviceStatus is structure to patch device status
 type DeviceStatus struct {
-	Status v1alpha1.DeviceStatus `json:"status"`
+	Status v1alpha2.DeviceStatus `json:"status"`
 }
 
 const (
@@ -60,10 +61,10 @@ type UpstreamController struct {
 func (uc *UpstreamController) Start() error {
 	klog.Info("Start upstream devicecontroller")
 
-	uc.deviceStatusChan = make(chan model.Message, config.Get().UpdateDeviceStatusBuffer)
+	uc.deviceStatusChan = make(chan model.Message, config.Config.Buffer.UpdateDeviceStatus)
 	go uc.dispatchMessage()
 
-	for i := 0; i < config.Get().UpdateDeviceStatusWorkers; i++ {
+	for i := 0; i < int(config.Config.Buffer.UpdateDeviceStatus); i++ {
 		go uc.updateDeviceStatus()
 	}
 	return nil
@@ -124,7 +125,7 @@ func (uc *UpstreamController) updateDeviceStatus() {
 				klog.Warningf("Device %s does not exist in downstream controller", deviceID)
 				continue
 			}
-			cacheDevice, ok := device.(*v1alpha1.Device)
+			cacheDevice, ok := device.(*v1alpha2.Device)
 			if !ok {
 				klog.Warning("Failed to assert to CacheDevice type")
 				continue
@@ -133,7 +134,7 @@ func (uc *UpstreamController) updateDeviceStatus() {
 			for twinName, twin := range msgTwin.Twin {
 				for i, cacheTwin := range deviceStatus.Status.Twins {
 					if twinName == cacheTwin.PropertyName && twin.Actual != nil && twin.Actual.Value != nil {
-						reported := v1alpha1.TwinProperty{}
+						reported := v1alpha2.TwinProperty{}
 						reported.Value = *twin.Actual.Value
 						reported.Metadata = make(map[string]string)
 						if twin.Actual.Metadata != nil {
@@ -157,7 +158,7 @@ func (uc *UpstreamController) updateDeviceStatus() {
 				klog.Errorf("Failed to marshal device status %v", deviceStatus)
 				continue
 			}
-			result := uc.crdClient.Patch(MergePatchType).Namespace(cacheDevice.Namespace).Resource(ResourceTypeDevices).Name(deviceID).Body(body).Do()
+			result := uc.crdClient.Patch(MergePatchType).Namespace(cacheDevice.Namespace).Resource(ResourceTypeDevices).Name(deviceID).Body(body).Do(context.Background())
 			if result.Error() != nil {
 				klog.Errorf("Failed to patch device status %v of device %v in namespace %v", deviceStatus, deviceID, cacheDevice.Namespace)
 				continue
@@ -189,14 +190,20 @@ func (uc *UpstreamController) unmarshalDeviceStatusMessage(msg model.Message) (*
 // NewUpstreamController create UpstreamController from config
 func NewUpstreamController(dc *DownstreamController) (*UpstreamController, error) {
 	config, err := utils.KubeConfig()
-	crdcli, err := utils.NewCRDClient(config)
-	ml, err := messagelayer.NewContextMessageLayer()
 	if err != nil {
-		klog.Warningf("Create message layer failed with error: %s", err)
+		klog.Warningf("Failed to create kube client: %s", err)
+		return nil, err
 	}
+
+	crdcli, err := utils.NewCRDClient(config)
+	if err != nil {
+		klog.Warningf("Failed to create crd client: %s", err)
+		return nil, err
+	}
+
 	uc := &UpstreamController{
 		crdClient:    crdcli,
-		messageLayer: ml,
+		messageLayer: messagelayer.NewContextMessageLayer(),
 		dc:           dc,
 	}
 	return uc, nil

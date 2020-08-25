@@ -38,8 +38,15 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/klog"
 
+	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
+	"github.com/kubeedge/beehive/pkg/core/model"
+	"github.com/kubeedge/kubeedge/common/constants"
 	edgeapi "github.com/kubeedge/kubeedge/common/types"
+	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
+	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/edge/pkg/edged/apis"
+	"github.com/kubeedge/kubeedge/edge/pkg/edged/config"
+	"github.com/kubeedge/kubeedge/edge/pkg/edgehub"
 	"github.com/kubeedge/kubeedge/pkg/util"
 )
 
@@ -64,6 +71,21 @@ func (e *edged) initialNode() (*v1.Node, error) {
 	hostname, err := os.Hostname()
 	if err != nil {
 		klog.Errorf("couldn't determine hostname: %v", err)
+		return nil, err
+	}
+	if len(e.nodeName) != 0 {
+		hostname = e.nodeName
+	}
+
+	node.Labels = map[string]string{
+		// Kubernetes built-in labels
+		v1.LabelHostname:   hostname,
+		v1.LabelOSStable:   runtime.GOOS,
+		v1.LabelArchStable: runtime.GOARCH,
+
+		// KubeEdge specific labels
+		"node-role.kubernetes.io/edge":  "",
+		"node-role.kubernetes.io/agent": "",
 	}
 
 	ip, err := e.getIP()
@@ -120,12 +142,10 @@ func (e *edged) getNodeStatusRequest(node *v1.Node) (*edgeapi.NodeStatusRequest,
 	nodeStatus.Status.Phase = e.getNodePhase()
 
 	devicePluginCapacity, _, removedDevicePlugins := e.getDevicePluginResourceCapacity()
-	if devicePluginCapacity != nil {
-		for k, v := range devicePluginCapacity {
-			klog.Infof("Update capacity for %s to %d", k, v.Value())
-			nodeStatus.Status.Capacity[k] = v
-			nodeStatus.Status.Allocatable[k] = v
-		}
+	for k, v := range devicePluginCapacity {
+		klog.Infof("Update capacity for %s to %d", k, v.Value())
+		nodeStatus.Status.Capacity[k] = v
+		nodeStatus.Status.Allocatable[k] = v
 	}
 
 	nameSet := sets.NewString(string(v1.ResourceCPU), string(v1.ResourceMemory), string(v1.ResourceStorage),
@@ -147,7 +167,7 @@ func (e *edged) getNodeStatusRequest(node *v1.Node) (*edgeapi.NodeStatusRequest,
 		klog.Infof("Remove capacity for %s", removedResource)
 		delete(node.Status.Capacity, v1.ResourceName(removedResource))
 	}
-
+	e.setNodeStatusDaemonEndpoints(nodeStatus)
 	e.setNodeStatusConditions(nodeStatus)
 	if e.gpuPluginEnabled {
 		err := e.setGPUInfo(nodeStatus)
@@ -164,6 +184,14 @@ func (e *edged) getNodeStatusRequest(node *v1.Node) (*edgeapi.NodeStatusRequest,
 	klog.Infof("Sync VolumesInUse: %v", node.Status.VolumesInUse)
 
 	return nodeStatus, nil
+}
+
+func (e *edged) setNodeStatusDaemonEndpoints(node *edgeapi.NodeStatusRequest) {
+	node.Status.DaemonEndpoints = v1.NodeDaemonEndpoints{
+		KubeletEndpoint: v1.DaemonEndpoint{
+			Port: constants.ServerPort,
+		},
+	}
 }
 
 func (e *edged) setNodeStatusConditions(node *edgeapi.NodeStatusRequest) {
@@ -213,7 +241,6 @@ func (e *edged) setNodeReadyCondition(node *edgeapi.NodeStatusRequest) {
 		newNodeReadyCondition.LastTransitionTime = currentTime
 		node.Status.Conditions = append(node.Status.Conditions, newNodeReadyCondition)
 	}
-
 }
 
 func (e *edged) getNodeInfo() (v1.NodeSystemInfo, error) {
@@ -232,17 +259,15 @@ func (e *edged) getNodeInfo() (v1.NodeSystemInfo, error) {
 	if err != nil {
 		return nodeInfo, err
 	}
-	nodeInfo.ContainerRuntimeVersion = fmt.Sprintf("remote://%s", runtimeVersion.String())
+	nodeInfo.ContainerRuntimeVersion = fmt.Sprintf("%s://%s", e.containerRuntimeName, runtimeVersion.String())
 
 	nodeInfo.KernelVersion = kernel
 	nodeInfo.OperatingSystem = runtime.GOOS
 	nodeInfo.Architecture = runtime.GOARCH
 	nodeInfo.KubeletVersion = e.version
 	nodeInfo.OSImage = prettyName
-	//nodeInfo.ContainerRuntimeVersion = fmt.Sprintf("docker://%s", runtimeVersion.String())
 
 	return nodeInfo, nil
-
 }
 
 func (e *edged) setGPUInfo(nodeStatus *edgeapi.NodeStatusRequest) error {
@@ -293,6 +318,9 @@ func (e *edged) setGPUInfo(nodeStatus *edgeapi.NodeStatusRequest) error {
 }
 
 func (e *edged) getIP() (string, error) {
+	if nodeIP := config.Config.NodeIP; nodeIP != "" {
+		return nodeIP, nil
+	}
 	hostName, _ := os.Hostname()
 	if hostName == "" {
 		hostName = e.nodeName
@@ -340,46 +368,39 @@ func (e *edged) getNodePhase() v1.NodePhase {
 	return v1.NodeRunning
 }
 
-func (e *edged) registerNode() {
-	step := 100 * time.Millisecond
-
-	for {
-		time.Sleep(step)
-		step = step * 2
-		if step >= 7*time.Second {
-			step = 7 * time.Second
-		}
-
-		node, err := e.initialNode()
-		if err != nil {
-			klog.Errorf("Unable to construct v1.Node object for edge: %v", err)
-			continue
-		}
-
-		e.setInitNode(node)
-
-		nodeStatus, err := e.getNodeStatusRequest(node)
-		if err != nil {
-			klog.Errorf("Unable to construct api.NodeStatusRequest object for edge: %v", err)
-			continue
-		}
-
-		klog.Infof("Attempting to register node %s", e.nodeName)
-		registered := e.tryRegisterToMeta(nodeStatus)
-		if registered {
-			klog.Infof("Successfully registered node %s", e.nodeName)
-			e.registrationCompleted = true
-			return
-		}
-	}
-}
-
-func (e *edged) tryRegisterToMeta(node *edgeapi.NodeStatusRequest) bool {
-	err := e.metaClient.NodeStatus(e.namespace).Update(e.nodeName, *node)
+func (e *edged) registerNode() error {
+	node, err := e.initialNode()
 	if err != nil {
-		klog.Errorf("register node failed, error: %v", err)
+		klog.Errorf("Unable to construct v1.Node object for edge: %v", err)
+		return err
 	}
-	return true
+
+	e.setInitNode(node)
+
+	if !config.Config.RegisterNode {
+		//when register-node set to false, do not auto register node
+		klog.Infof("register-node is set to false")
+		e.registrationCompleted = true
+		return nil
+	}
+
+	klog.Infof("Attempting to register node %s", e.nodeName)
+
+	resource := fmt.Sprintf("%s/%s/%s", e.namespace, model.ResourceTypeNodeStatus, e.nodeName)
+	nodeInfoMsg := message.BuildMsg(modules.MetaGroup, "", modules.EdgedModuleName, resource, model.InsertOperation, node)
+	res, err := beehiveContext.SendSync(edgehub.ModuleNameEdgeHub, *nodeInfoMsg, syncMsgRespTimeout)
+	if err != nil || res.Content != "OK" {
+		klog.Errorf("register node failed, error: %v", err)
+		if res.Content != "OK" {
+			klog.Errorf("response from cloud core: %s", res.Content)
+		}
+		return err
+	}
+
+	klog.Infof("Successfully registered node %s", e.nodeName)
+	e.registrationCompleted = true
+
+	return nil
 }
 
 func (e *edged) updateNodeStatus() error {
@@ -398,10 +419,16 @@ func (e *edged) updateNodeStatus() error {
 
 func (e *edged) syncNodeStatus() {
 	if !e.registrationCompleted {
-		// This will exit immediately if it doesn't need to do anything.
-		e.registerNode()
-	}
-	if err := e.updateNodeStatus(); err != nil {
-		klog.Errorf("Unable to update node status: %v", err)
+		if err := e.registerNode(); err != nil {
+			klog.Errorf("Register node failed: %v", err)
+			return
+		}
+		if err := e.updateNodeStatus(); err != nil {
+			klog.Errorf("Unable to update node status: %v", err)
+		}
+	} else {
+		if err := e.updateNodeStatus(); err != nil {
+			klog.Errorf("Unable to update node status: %v", err)
+		}
 	}
 }

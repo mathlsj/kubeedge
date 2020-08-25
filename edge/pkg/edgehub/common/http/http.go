@@ -3,6 +3,7 @@ package http
 import (
 	"crypto/tls"
 	"crypto/x509"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -62,6 +63,23 @@ func NewHTTPSclient(certFile, keyFile string) (*http.Client, error) {
 	return client, nil
 }
 
+// NewHTTPclientWithCA create client without certificate
+func NewHTTPclientWithCA(capem []byte, certificate tls.Certificate) (*http.Client, error) {
+	pool := x509.NewCertPool()
+	if ok := pool.AppendCertsFromPEM(capem); !ok {
+		return nil, fmt.Errorf("cannot parse the certificates")
+	}
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{
+			RootCAs:            pool,
+			InsecureSkipVerify: false,
+			Certificates:       []tls.Certificate{certificate},
+		},
+	}
+	client := &http.Client{Transport: tr, Timeout: connectTimeout}
+	return client, nil
+}
+
 // SendRequest sends a http request and return the resp info
 func SendRequest(req *http.Request, client *http.Client) (*http.Response, error) {
 	resp, err := client.Do(req)
@@ -72,14 +90,17 @@ func SendRequest(req *http.Request, client *http.Client) (*http.Response, error)
 }
 
 // BuildRequest Creates a HTTP request.
-func BuildRequest(method string, urlStr string, body io.Reader, token string) (*http.Request, error) {
+func BuildRequest(method string, urlStr string, body io.Reader, token string, nodeName string) (*http.Request, error) {
 	req, err := http.NewRequest(method, urlStr, body)
 	if err != nil {
 		return nil, err
 	}
 	if token != "" {
-		req.Header.Add("X-Auth-Token", token)
+		bearerToken := "Bearer " + token
+		req.Header.Add("Authorization", bearerToken)
 	}
-	req.Header.Add("Content-Type", "application/json")
+	if nodeName != "" {
+		req.Header.Add("NodeName", nodeName)
+	}
 	return req, nil
 }

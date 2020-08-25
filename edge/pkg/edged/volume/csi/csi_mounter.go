@@ -230,7 +230,6 @@ func (c *csiMountMgr) SetUpAt(dir string, mounterArgs volume.MounterArgs) error 
 			return fmt.Errorf("fetching NodePublishSecretRef %s/%s failed: %v",
 				secretRef.Namespace, secretRef.Name, err)
 		}
-
 	}
 
 	err = csi.NodePublishVolume(
@@ -309,7 +308,7 @@ func (c *csiMountMgr) podAttributes() (map[string]string, error) {
 	}
 
 	// if PodInfoOnMount is not set or false we do not set pod attributes
-	if csiDriver.Spec.PodInfoOnMount == nil || *csiDriver.Spec.PodInfoOnMount == false {
+	if csiDriver.Spec.PodInfoOnMount == nil || !*csiDriver.Spec.PodInfoOnMount {
 		klog.V(4).Infof(log("CSIDriver %q does not require pod information", c.driverName))
 		return nil, nil
 	}
@@ -400,7 +399,7 @@ func (c *csiMountMgr) applyFSGroup(fsType string, fsGroup *int64) error {
 			return nil
 		}
 
-		err := volume.SetVolumeOwnership(c, fsGroup)
+		err := volume.SetVolumeOwnership(c, fsGroup, api.PodSecurityContext{}.FSGroupChangePolicy)
 		if err != nil {
 			return err
 		}

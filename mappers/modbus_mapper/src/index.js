@@ -46,7 +46,7 @@ async.series([
             }
         });
     },
-    
+
     //load dpl first time
     function(callback) {
         WatchFiles.loadDpl(options.dpl_name, (devInsMap, devModMap, devProMap, modVistrMap)=>{
@@ -167,7 +167,7 @@ async.series([
                             }
                         });
                     });
-                }  
+                }
             } catch (err) {
                 logger.error('failed to change devicetwin of device[%s], err: ', deviceID, err);
             }
@@ -247,7 +247,7 @@ WatchFiles.watchChange(path.join(__dirname, 'dpl'), ()=>{
                     });
                 }
             });
-            callback();    
+            callback();
         }
     ],function(err) {
         if (err) {
@@ -271,7 +271,7 @@ setInterval(()=>{
     }
 }, 2000);
 
-// syncDeviceTwin check each property of each device accroding to the dpl configuration
+// syncDeviceTwin check each property of each device according to the dpl configuration
 function syncDeviceTwin(dt, key, protocol, actuals) {
     async.eachSeries(devMod.get(key).properties, (property, callback)=>{
         let visitor;

@@ -10,8 +10,10 @@ import (
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
+	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/certificate"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/clients"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/config"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
 )
 
 //define edgehub module name
@@ -19,25 +21,30 @@ const (
 	ModuleNameEdgeHub = "websocket"
 )
 
+var HasTLSTunnelCerts = make(chan bool, 1)
+
 //EdgeHub defines edgehub object structure
 type EdgeHub struct {
+	certManager   certificate.CertManager
 	chClient      clients.Adapter
 	reconnectChan chan struct{}
 	syncKeeper    map[string]chan model.Message
 	keeperLock    sync.RWMutex
+	enable        bool
 }
 
-func newEdgeHub() *EdgeHub {
+func newEdgeHub(enable bool) *EdgeHub {
 	return &EdgeHub{
 		reconnectChan: make(chan struct{}),
 		syncKeeper:    make(map[string]chan model.Message),
+		enable:        enable,
 	}
 }
 
 // Register register edgehub
-func Register() {
-	config.InitConfigure()
-	core.Register(newEdgeHub())
+func Register(eh *v1alpha1.EdgeHub, nodeName string) {
+	config.InitConfigure(eh, nodeName)
+	core.Register(newEdgeHub(eh.Enable))
 }
 
 //Name returns the name of EdgeHub module
@@ -50,8 +57,20 @@ func (eh *EdgeHub) Group() string {
 	return modules.HubGroup
 }
 
+//Enable indicates whether this module is enabled
+func (eh *EdgeHub) Enable() bool {
+	return eh.enable
+}
+
 //Start sets context and starts the controller
 func (eh *EdgeHub) Start() {
+	eh.certManager = certificate.NewCertManager(config.Config.EdgeHub, config.Config.NodeName)
+	eh.certManager.Start()
+
+	HasTLSTunnelCerts <- true
+	close(HasTLSTunnelCerts)
+
+	go eh.ifRotationDone()
 
 	for {
 		select {
@@ -59,7 +78,6 @@ func (eh *EdgeHub) Start() {
 			klog.Warning("EdgeHub stop")
 			return
 		default:
-
 		}
 		err := eh.initial()
 		if err != nil {
@@ -87,7 +105,7 @@ func (eh *EdgeHub) Start() {
 		eh.pubConnectInfo(false)
 
 		// sleep one period of heartbeat, then try to connect cloud hub again
-		time.Sleep(config.Get().CtrConfig.HeartbeatPeriod * 2)
+		time.Sleep(time.Duration(config.Config.Heartbeat) * time.Second * 2)
 
 		// clean channel
 	clean:

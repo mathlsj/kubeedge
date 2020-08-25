@@ -50,7 +50,7 @@ The cloud native and microservice architecture is becoming more and more popular
 
 ### Service communication from cloud to edge
 * ESD1: Application on cloud visit service with clusterIP and request goes to EC(refer to step CS2, CS3)
-* ESD2: Router find out the PODs in this service and pick one with some kind of load balance mechanism. Then send the request to the choosen edge with the router rule set in CS3.
+* ESD2: Router find out the PODs in this service and pick one with some kind of load balance mechanism. Then send the request to the chosen edge with the router rule set in CS3.
 * ESD3: EdgeHub/ServiceBus get the request and redirect to the POD
 
 ### Service communication between edges
@@ -89,7 +89,7 @@ Since Router fetches rules from DB, in later versions it can be started as a dif
 ### Router Low-level Design
 
 ### Providers
-Providers are plugins to reach a service running on edge or on cloud. For example (ServiceBus, EventBus running in edgecore) 
+Providers are plugins to reach a service running on edge or on cloud. For example (ServiceBus, EventBus running in edgecore)
 Providers can be classified into two types
 1) Source
 2) Target
@@ -135,7 +135,7 @@ type Source interface {
 	RegisterListener(rule model.Rule, res model.Map, handler func(interface{})) error
 	// UnregisterListener is used to unregister a listener when rule is deleted
 	UnregisterListener(rule model.Rule, res map[string]interface{})
-	// Callback is function for sending response/ACK if required for a request 
+	// Callback is function for sending response/ACK if required for a request
 	Callback(map[string]interface{})
 }
 ```
@@ -157,7 +157,7 @@ Each provider that wants to register as a Target should implement following inte
 type Target interface {
 	// Name returns name of the provider
 	Name() string
-	// Forward is used to forward the request to target 
+	// Forward is used to forward the request to target
 	Forward(map[string]interface{}, interface{}, func(map[string]interface{})) error
 }
 ```

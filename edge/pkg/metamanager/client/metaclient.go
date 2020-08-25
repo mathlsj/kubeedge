@@ -29,6 +29,7 @@ type CoreInterface interface {
 	PersistentVolumesGetter
 	PersistentVolumeClaimsGetter
 	VolumeAttachmentsGetter
+	ListenerGetter
 }
 
 type metaClient struct {
@@ -84,6 +85,11 @@ func (m *metaClient) VolumeAttachments(namespace string) VolumeAttachmentsInterf
 	return newVolumeAttachments(namespace, m.send)
 }
 
+// New Listener metaClient
+func (m *metaClient) Listener() ListenInterface {
+	return newListener(m.send)
+}
+
 // New creates new metaclient
 func New() CoreInterface {
 	return &metaClient{
@@ -94,6 +100,7 @@ func New() CoreInterface {
 //SendInterface is to sync interface
 type SendInterface interface {
 	SendSync(message *model.Message) (*model.Message, error)
+	Send(message *model.Message)
 }
 
 type send struct {
@@ -111,7 +118,7 @@ func (s *send) SendSync(message *model.Message) (*model.Message, error) {
 		resp, err = beehiveContext.SendSync(metamanager.MetaManagerModuleName, *message, syncMsgRespTimeout)
 		retries++
 		if err == nil {
-			klog.Infof("send sync message %s successed and response: %v", message.GetResource(), resp)
+			klog.V(2).Infof("send sync message %s successed and response: %v", message.GetResource(), resp)
 			return true, nil
 		}
 		if retries < 3 {
@@ -119,7 +126,10 @@ func (s *send) SendSync(message *model.Message) (*model.Message, error) {
 			return false, nil
 		}
 		return true, err
-
 	})
 	return &resp, err
+}
+
+func (s *send) Send(message *model.Message) {
+	beehiveContext.Send(metamanager.MetaManagerModuleName, *message)
 }

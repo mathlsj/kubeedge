@@ -29,13 +29,15 @@ import (
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 
-	"github.com/kubeedge/kubeedge/cloud/pkg/apis/devices/v1alpha1"
+	"github.com/kubeedge/kubeedge/cloud/pkg/apis/devices/v1alpha2"
 	"github.com/kubeedge/kubeedge/edge/test/integration/utils/common"
 	"github.com/kubeedge/kubeedge/edge/test/integration/utils/helpers"
 	"github.com/kubeedge/kubeedge/mappers/bluetooth_mapper/scheduler"
 	"github.com/kubeedge/kubeedge/mappers/bluetooth_mapper/watcher"
 	"github.com/kubeedge/kubeedge/tests/e2e/utils"
 )
+
+const topic = "$ke/device/bluetooth-mapper/mock-temp-sensor-instance/scheduler/result"
 
 var TokenClient Token
 var ClientOpts *MQTT.ClientOptions
@@ -55,7 +57,6 @@ var readWrittenData bool
 
 // DataConversion checks whether data is properly as expected by the data converter.
 func DataConversion(client MQTT.Client, message MQTT.Message) {
-	topic := "$ke/device/bluetooth-mapper/mock-temp-sensor-instance/scheduler/result"
 	expectedTemp := "32.375000"
 	dataConverted = false
 	if message.Topic() == topic {
@@ -73,7 +74,6 @@ func DataConversion(client MQTT.Client, message MQTT.Message) {
 
 // WriteDataReceived checks whether data is properly written to connected device.
 func WriteDataReceived(client MQTT.Client, message MQTT.Message) {
-	topic := "$ke/device/bluetooth-mapper/mock-temp-sensor-instance/scheduler/result"
 	readWrittenData = false
 	if message.Topic() == topic {
 		devicePayload := message.Payload()
@@ -91,7 +91,6 @@ func WriteDataReceived(client MQTT.Client, message MQTT.Message) {
 
 // ScheculeExecute counts the number of times schedule is executed by the Scheduler.
 func ScheduleExecute(client MQTT.Client, message MQTT.Message) {
-	topic := "$ke/device/bluetooth-mapper/mock-temp-sensor-instance/scheduler/result"
 	expectedTemp := "36"
 	if message.Topic() == topic {
 		devicePayload := message.Payload()
@@ -119,10 +118,9 @@ var _ = Describe("Application deployment test in E2E scenario", func() {
 				utils.Infof("Connection successful")
 			}
 			Expect(TokenClient.Error()).NotTo(HaveOccurred())
-			scheduletopic := "$ke/device/bluetooth-mapper/mock-temp-sensor-instance/scheduler/result"
-			Token := Client.Subscribe(scheduletopic, 0, WriteDataReceived)
+			Token := Client.Subscribe(topic, 0, WriteDataReceived)
 			if Token.Wait() && TokenClient.Error() != nil {
-				utils.Fatalf("Subscribe to Topic  Failed  %s, %s", TokenClient.Error(), scheduletopic)
+				utils.Fatalf("Subscribe to Topic  Failed  %s, %s", TokenClient.Error(), topic)
 			}
 			Expect(TokenClient.Error()).NotTo(HaveOccurred())
 		})
@@ -145,10 +143,10 @@ var _ = Describe("Application deployment test in E2E scenario", func() {
 			Expect(err).To(BeNil())
 			Expect(resp.StatusCode).Should(Equal(http.StatusCreated))
 			podlist, err := utils.GetPods(ctx.Cfg.K8SMasterForKubeEdge+appHandler, nodeName)
-			utils.WaitforPodsRunning(ctx.Cfg.K8SMasterForKubeEdge, podlist, 240*time.Second)
+			utils.WaitforPodsRunning(ctx.Cfg.KubeConfigPath, podlist, 240*time.Second)
 			Eventually(func() bool {
 				return readWrittenData
-			}, "120s", "0.5s").ShouldNot(Equal(false), "Message is not recieved in expected time !!")
+			}, "120s", "0.5s").ShouldNot(Equal(false), "Message is not received in expected time !!")
 		})
 	})
 
@@ -164,10 +162,9 @@ var _ = Describe("Application deployment test in E2E scenario", func() {
 				utils.Infof("Subscribe Connection Successful")
 			}
 			Expect(TokenClient.Error()).NotTo(HaveOccurred())
-			scheduletopic := "$ke/device/bluetooth-mapper/mock-temp-sensor-instance/scheduler/result"
-			Token := Client.Subscribe(scheduletopic, 0, DataConversion)
+			Token := Client.Subscribe(topic, 0, DataConversion)
 			if Token.Wait() && TokenClient.Error() != nil {
-				utils.Fatalf("Subscribe to Topic  Failed  %s, %s", TokenClient.Error(), scheduletopic)
+				utils.Fatalf("Subscribe to Topic  Failed  %s, %s", TokenClient.Error(), topic)
 			}
 			Expect(TokenClient.Error()).NotTo(HaveOccurred())
 			var expectedSchedule []scheduler.Schedule
@@ -241,13 +238,13 @@ var _ = Describe("Application deployment test in E2E scenario", func() {
 	})
 
 	// check whether watcher has performed its operation successfully.
-	Context("Test whether watcher has succesfully updated the twin state as desired", func() {
+	Context("Test whether watcher has successfully updated the twin state as desired", func() {
 		BeforeEach(func() {
 			var expectedWatchAttribute watcher.Watcher
 			// Create and publish scheduler run time data
 			watchAttribute := watcher.Attribute{Name: "io-data", Actions: []string{"IOData"}}
 			devTwinAtt := []watcher.Attribute{watchAttribute}
-			expectedWatchAttribute = watcher.Watcher{devTwinAtt}
+			expectedWatchAttribute = watcher.Watcher{DeviceTwinAttributes: devTwinAtt}
 			// Subscribing to topic where scheduler publishes the data
 			ClientOpts = helpers.HubClientInit(ctx.Cfg.MqttEndpoint, "bluetoothmapper", "", "")
 			Client = MQTT.NewClient(ClientOpts)
@@ -269,7 +266,7 @@ var _ = Describe("Application deployment test in E2E scenario", func() {
 			Expect(TokenClient.Error()).NotTo(HaveOccurred())
 		})
 		It("E2E_WATCHER: Test whether the watcher performs it operation correctly", func() {
-			var deviceList v1alpha1.DeviceList
+			var deviceList v1alpha2.DeviceList
 			newLedDevice := utils.NewMockInstance(nodeName)
 			time.Sleep(20 * time.Second)
 			list, err := utils.GetDevice(&deviceList, ctx.Cfg.K8SMasterForKubeEdge+mockInstanceHandler, &newLedDevice)

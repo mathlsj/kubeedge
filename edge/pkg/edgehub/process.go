@@ -17,7 +17,6 @@ import (
 
 const (
 	waitConnectionPeriod = time.Minute
-	authEventType        = "auth_info_event"
 )
 
 var groupMap = map[string]string{
@@ -28,7 +27,7 @@ var groupMap = map[string]string{
 }
 
 func (eh *EdgeHub) initial() (err error) {
-	cloudHubClient, err := clients.GetClient(config.Get().CtrConfig.Protocol, config.Get())
+	cloudHubClient, err := clients.GetClient()
 	if err != nil {
 		return err
 	}
@@ -104,7 +103,6 @@ func (eh *EdgeHub) routeToEdge() {
 			klog.Warning("EdgeHub RouteToEdge stop")
 			return
 		default:
-
 		}
 		message, err := eh.chClient.Receive()
 		if err != nil {
@@ -132,7 +130,7 @@ func (eh *EdgeHub) sendToCloud(message model.Message) error {
 
 	syncKeep := func(message model.Message) {
 		tempChannel := eh.addKeepChannel(message.GetID())
-		sendTimer := time.NewTimer(config.Get().CtrConfig.HeartbeatPeriod)
+		sendTimer := time.NewTimer(time.Duration(config.Config.Heartbeat) * time.Second)
 		select {
 		case response := <-tempChannel:
 			sendTimer.Stop()
@@ -183,7 +181,6 @@ func (eh *EdgeHub) keepalive() {
 			klog.Warning("EdgeHub KeepAlive stop")
 			return
 		default:
-
 		}
 		msg := model.NewMessage("").
 			BuildRouter(ModuleNameEdgeHub, "resource", "node", "keepalive").
@@ -197,7 +194,7 @@ func (eh *EdgeHub) keepalive() {
 			return
 		}
 
-		time.Sleep(config.Get().CtrConfig.HeartbeatPeriod)
+		time.Sleep(time.Duration(config.Config.Heartbeat) * time.Second)
 	}
 }
 
@@ -212,5 +209,14 @@ func (eh *EdgeHub) pubConnectInfo(isConnected bool) {
 		message := model.NewMessage("").BuildRouter(message.SourceNodeConnection, group,
 			message.ResourceTypeNodeConnection, message.OperationNodeConnection).FillBody(content)
 		beehiveContext.SendToGroup(group, *message)
+	}
+}
+
+func (eh *EdgeHub) ifRotationDone() {
+	if eh.certManager.RotateCertificates {
+		for {
+			<-eh.certManager.Done
+			eh.reconnectChan <- struct{}{}
+		}
 	}
 }

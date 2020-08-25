@@ -1,39 +1,57 @@
 package config
 
 import (
-	"os"
+	"net"
 	"sync"
 
 	"k8s.io/klog"
 
-	"github.com/kubeedge/beehive/pkg/common/config"
+	"github.com/kubeedge/kubeedge/edgemesh/pkg/common"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
 )
 
-var c Configure
+var Config Configure
 var once sync.Once
 
 type Configure struct {
-	StrategyName string
+	v1alpha1.EdgeMesh
+	// for edgemesh listener
+	ListenIP net.IP
+	Listener *net.TCPListener
 }
 
-func InitConfigure() {
+func InitConfigure(e *v1alpha1.EdgeMesh) {
 	once.Do(func() {
-		var errs []error
-		if len(errs) != 0 {
-			for _, e := range errs {
-				klog.Errorf("%v", e)
+		Config = Configure{
+			EdgeMesh: *e,
+		}
+		if Config.Enable {
+			// get listen ip
+			var err error
+			Config.ListenIP, err = common.GetInterfaceIP(Config.ListenInterface)
+			if err != nil {
+				klog.Errorf("[EdgeMesh] get listen ip err: %v", err)
+				return
 			}
-			klog.Error("init edgemesh config error, exit")
-			os.Exit(1)
+			// get listener
+			tmpPort := 0
+			listenAddr := &net.TCPAddr{
+				IP:   Config.ListenIP,
+				Port: Config.ListenPort + tmpPort,
+			}
+			for {
+				ln, err := net.ListenTCP("tcp", listenAddr)
+				if err == nil {
+					Config.Listener = ln
+					break
+				}
+				klog.Warningf("[EdgeMesh] listen on address %v err: %v", listenAddr, err)
+				tmpPort++
+				listenAddr = &net.TCPAddr{
+					IP:   Config.ListenIP,
+					Port: Config.ListenPort + tmpPort,
+				}
+			}
 		}
-		strategyName := config.CONFIG.GetConfigurationByKey("mesh.loadbalance.strategy-name").(string)
-		c = Configure{
-			StrategyName: strategyName,
-		}
-		klog.Infof("init edgemesh config successfully，config info %++v", c)
 	})
-
-}
-func Get() *Configure {
-	return &c
 }

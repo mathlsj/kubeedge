@@ -60,7 +60,6 @@ func (uc *UpstreamController) WaitforMessage() {
 			klog.Infof("Stop waiting for message")
 			return
 		default:
-
 		}
 		// Receive message from cloudhub
 		msg, err := beehiveContext.Receive(constants.ControllerStub)
@@ -116,7 +115,7 @@ func (uc *UpstreamController) UpdatePodStatus() {
 				// Get pod
 				var pod types.FakePod
 				if err := json.Unmarshal(data, &pod); err != nil {
-					klog.Errorf("Unmarshal content failed with error: %s", msg.GetID(), err)
+					klog.Errorf("Unmarshal content failed with error: %s, %v", msg.GetID(), err)
 					continue
 				}
 

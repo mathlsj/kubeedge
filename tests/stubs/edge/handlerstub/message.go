@@ -37,7 +37,6 @@ func (hs *HandlerStub) WaitforMessage() {
 				klog.Warning("stop waiting for message")
 				return
 			default:
-
 			}
 			if msg, err := beehiveContext.Receive(hs.Name()); err == nil {
 				klog.V(4).Infof("Receive a message %v", msg)
@@ -94,7 +93,7 @@ func (hs *HandlerStub) ProcessInsert(msg model.Message) {
 		// Get pod
 		var pod types.FakePod
 		if err := json.Unmarshal(data, &pod); err != nil {
-			klog.Errorf("Unmarshal content failed with error: %s", msg.GetID(), err)
+			klog.Errorf("Unmarshal content failed with error: %s, %v", msg.GetID(), err)
 			return
 		}
 
@@ -142,7 +141,7 @@ func (hs *HandlerStub) ProcessDelete(msg model.Message) {
 		// Get pod
 		var pod types.FakePod
 		if err := json.Unmarshal(data, &pod); err != nil {
-			klog.Errorf("Unmarshal content failed with error: %s", msg.GetID(), err)
+			klog.Errorf("Unmarshal content failed with error: %s, %v", msg.GetID(), err)
 			return
 		}
 		// Delete pod in cache

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
@@ -58,6 +59,7 @@ func (dc *DownstreamController) syncPod() {
 				continue
 			}
 			msg := model.NewMessage("")
+			msg.SetResourceVersion(pod.ResourceVersion)
 			resource, err := messagelayer.BuildResource(pod.Spec.NodeName, pod.Namespace, model.ResourceTypePod, pod.Name)
 			if err != nil {
 				klog.Warningf("built message resource failed with error: %s", err)
@@ -79,7 +81,7 @@ func (dc *DownstreamController) syncPod() {
 			if err := dc.messageLayer.Send(*msg); err != nil {
 				klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 			} else {
-				klog.Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+				klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 			}
 		}
 	}
@@ -105,7 +107,6 @@ func (dc *DownstreamController) syncConfigMap() {
 				operation = model.UpdateOperation
 			case watch.Deleted:
 				operation = model.DeleteOperation
-				dc.lc.DeleteConfigMap(configMap.Namespace, configMap.Name)
 			default:
 				// unsupported operation, no need to send to any node
 				klog.Warningf("config map event type: %s unsupported", e.Type)
@@ -113,9 +114,13 @@ func (dc *DownstreamController) syncConfigMap() {
 			}
 
 			nodes := dc.lc.ConfigMapNodes(configMap.Namespace, configMap.Name)
-			klog.Infof("there are %d nodes need to sync config map, operation: %s", len(nodes), e.Type)
+			if e.Type == watch.Deleted {
+				dc.lc.DeleteConfigMap(configMap.Namespace, configMap.Name)
+			}
+			klog.V(4).Infof("there are %d nodes need to sync config map, operation: %s", len(nodes), e.Type)
 			for _, n := range nodes {
 				msg := model.NewMessage("")
+				msg.SetResourceVersion(configMap.ResourceVersion)
 				resource, err := messagelayer.BuildResource(n, configMap.Namespace, model.ResourceTypeConfigmap, configMap.Name)
 				if err != nil {
 					klog.Warningf("build message resource failed with error: %s", err)
@@ -127,7 +132,7 @@ func (dc *DownstreamController) syncConfigMap() {
 				if err != nil {
 					klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 				} else {
-					klog.Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+					klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 				}
 			}
 		}
@@ -155,7 +160,6 @@ func (dc *DownstreamController) syncSecret() {
 				operation = model.UpdateOperation
 			case watch.Deleted:
 				operation = model.DeleteOperation
-				dc.lc.DeleteSecret(secret.Namespace, secret.Name)
 			default:
 				// unsupported operation, no need to send to any node
 				klog.Warningf("secret event type: %s unsupported", e.Type)
@@ -163,9 +167,13 @@ func (dc *DownstreamController) syncSecret() {
 			}
 
 			nodes := dc.lc.SecretNodes(secret.Namespace, secret.Name)
-			klog.Infof("there are %d nodes need to sync secret, operation: %s", len(nodes), e.Type)
+			if e.Type == watch.Deleted {
+				dc.lc.DeleteSecret(secret.Namespace, secret.Name)
+			}
+			klog.V(4).Infof("there are %d nodes need to sync secret, operation: %s", len(nodes), e.Type)
 			for _, n := range nodes {
 				msg := model.NewMessage("")
+				msg.SetResourceVersion(secret.ResourceVersion)
 				resource, err := messagelayer.BuildResource(n, secret.Namespace, model.ResourceTypeSecret, secret.Name)
 				if err != nil {
 					klog.Warningf("build message resource failed with error: %s", err)
@@ -177,7 +185,7 @@ func (dc *DownstreamController) syncSecret() {
 				if err != nil {
 					klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 				} else {
-					klog.Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+					klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 				}
 			}
 		}
@@ -220,7 +228,7 @@ func (dc *DownstreamController) syncEdgeNodes() {
 							if err := dc.messageLayer.Send(*msg); err != nil {
 								klog.Warningf("Send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 							} else {
-								klog.Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+								klog.V(4).Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 							}
 
 							for _, svc := range svcs {
@@ -237,7 +245,7 @@ func (dc *DownstreamController) syncEdgeNodes() {
 									if err := dc.messageLayer.Send(*msg); err != nil {
 										klog.Warningf("Send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 									} else {
-										klog.Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+										klog.V(4).Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 									}
 								}
 							}
@@ -255,7 +263,7 @@ func (dc *DownstreamController) syncEdgeNodes() {
 							if err := dc.messageLayer.Send(*msg); err != nil {
 								klog.Warningf("Send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 							} else {
-								klog.Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+								klog.V(4).Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 							}
 						}
 						break
@@ -263,6 +271,20 @@ func (dc *DownstreamController) syncEdgeNodes() {
 				}
 			case watch.Deleted:
 				dc.lc.DeleteNode(node.ObjectMeta.Name)
+
+				msg := model.NewMessage("")
+				resource, err := messagelayer.BuildResource(node.Name, "namespace", constants.ResourceNode, node.Name)
+				if err != nil {
+					klog.Warningf("Built message resource failed with error: %s", err)
+					break
+				}
+				msg.BuildRouter(constants.EdgeControllerModuleName, constants.GroupResource, resource, model.DeleteOperation)
+				err = dc.messageLayer.Send(*msg)
+				if err != nil {
+					klog.Warningf("send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
+				} else {
+					klog.V(4).Infof("send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+				}
 			default:
 				// unsupported operation, no need to send to any node
 				klog.Warningf("Node event type: %s unsupported", e.Type)
@@ -308,6 +330,7 @@ func (dc *DownstreamController) syncService() {
 					return true
 				}
 				msg := model.NewMessage("")
+				msg.SetResourceVersion(svc.ResourceVersion)
 				resource, err := messagelayer.BuildResource(nodeName, svc.Namespace, common.ResourceTypeService, svc.Name)
 				if err != nil {
 					klog.Warningf("Built message resource failed with error: %v", err)
@@ -318,7 +341,7 @@ func (dc *DownstreamController) syncService() {
 				if err := dc.messageLayer.Send(*msg); err != nil {
 					klog.Warningf("Send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 				} else {
-					klog.Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+					klog.V(4).Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 				}
 				return true
 			})
@@ -374,7 +397,7 @@ func (dc *DownstreamController) syncEndpoints() {
 						LabelSelector: labelSelectorString,
 						Limit:         100,
 					}
-					pods, err = dc.kubeClient.CoreV1().Pods(svc.Namespace).List(listOptions)
+					pods, err = dc.kubeClient.CoreV1().Pods(svc.Namespace).List(context.Background(), listOptions)
 					if err == nil {
 						dc.lc.AddOrUpdateServicePods(fmt.Sprintf("%s/%s", svc.Namespace, svc.Name), pods.Items)
 					}
@@ -386,6 +409,7 @@ func (dc *DownstreamController) syncEndpoints() {
 						return true
 					}
 					msg := model.NewMessage("")
+					msg.SetResourceVersion(eps.ResourceVersion)
 					resource, err := messagelayer.BuildResource(nodeName, eps.Namespace, common.ResourceTypeEndpoints, eps.Name)
 					if err != nil {
 						klog.Warningf("Built message resource failed with error: %s", err)
@@ -396,7 +420,7 @@ func (dc *DownstreamController) syncEndpoints() {
 					if err := dc.messageLayer.Send(*msg); err != nil {
 						klog.Warningf("Send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 					} else {
-						klog.Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+						klog.V(4).Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 					}
 					if operation != model.DeleteOperation && ok {
 						msg := model.NewMessage("")
@@ -410,7 +434,7 @@ func (dc *DownstreamController) syncEndpoints() {
 						if err := dc.messageLayer.Send(*msg); err != nil {
 							klog.Warningf("Send message failed with error: %s, operation: %s, resource: %s", err, msg.GetOperation(), msg.GetResource())
 						} else {
-							klog.Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
+							klog.V(4).Infof("Send message successfully, operation: %s, resource: %s", msg.GetOperation(), msg.GetResource())
 						}
 					}
 					return true
@@ -453,7 +477,7 @@ func (dc *DownstreamController) initLocating() error {
 
 	set := labels.Set{manager.NodeRoleKey: manager.NodeRoleValue}
 	selector := labels.SelectorFromSet(set)
-	nodes, err := dc.kubeClient.CoreV1().Nodes().List(metav1.ListOptions{LabelSelector: selector.String()})
+	nodes, err := dc.kubeClient.CoreV1().Nodes().List(context.Background(), metav1.ListOptions{LabelSelector: selector.String()})
 	if err != nil {
 		return err
 	}
@@ -468,11 +492,11 @@ func (dc *DownstreamController) initLocating() error {
 		dc.lc.UpdateEdgeNode(node.ObjectMeta.Name, status)
 	}
 
-	if !config.Get().EdgeSiteEnabled {
-		pods, err = dc.kubeClient.CoreV1().Pods(v1.NamespaceAll).List(metav1.ListOptions{})
+	if !config.Config.EdgeSiteEnable {
+		pods, err = dc.kubeClient.CoreV1().Pods(v1.NamespaceAll).List(context.Background(), metav1.ListOptions{})
 	} else {
-		selector := fields.OneTermEqualSelector("spec.nodeName", config.Get().KubeNodeName).String()
-		pods, err = dc.kubeClient.CoreV1().Pods(v1.NamespaceAll).List(metav1.ListOptions{FieldSelector: selector})
+		selector := fields.OneTermEqualSelector("spec.nodeName", config.Config.NodeName).String()
+		pods, err = dc.kubeClient.CoreV1().Pods(v1.NamespaceAll).List(context.Background(), metav1.ListOptions{FieldSelector: selector})
 	}
 	if err != nil {
 		return err
@@ -497,11 +521,11 @@ func NewDownstreamController() (*DownstreamController, error) {
 	}
 
 	var nodeName = ""
-	if config.Get().EdgeSiteEnabled {
-		if config.Get().KubeNodeName == "" {
+	if config.Config.EdgeSiteEnable {
+		if config.Config.NodeName == "" {
 			return nil, fmt.Errorf("kubeEdge node name is not provided in edgesite controller configuration")
 		}
-		nodeName = config.Get().KubeNodeName
+		nodeName = config.Config.NodeName
 	}
 
 	podManager, err := manager.NewPodManager(cli, v1.NamespaceAll, nodeName)
@@ -540,12 +564,6 @@ func NewDownstreamController() (*DownstreamController, error) {
 		return nil, err
 	}
 
-	ml, err := messagelayer.NewContextMessageLayer()
-	if err != nil {
-		klog.Warningf("create message layer failed with error: %s", err)
-		return nil, err
-	}
-
 	dc := &DownstreamController{
 		kubeClient:       cli,
 		podManager:       podManager,
@@ -554,7 +572,7 @@ func NewDownstreamController() (*DownstreamController, error) {
 		nodeManager:      nodesManager,
 		serviceManager:   serviceManager,
 		endpointsManager: endpointsManager,
-		messageLayer:     ml,
+		messageLayer:     messagelayer.NewContextMessageLayer(),
 		lc:               lc,
 	}
 	if err := dc.initLocating(); err != nil {

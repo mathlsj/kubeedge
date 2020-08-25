@@ -33,7 +33,7 @@ import (
 	v1 "k8s.io/api/apps/v1"
 	metav1 "k8s.io/api/core/v1"
 
-	"github.com/kubeedge/kubeedge/cloud/pkg/apis/devices/v1alpha1"
+	"github.com/kubeedge/kubeedge/cloud/pkg/apis/devices/v1alpha2"
 	"github.com/kubeedge/kubeedge/tests/e2e/utils"
 )
 
@@ -46,16 +46,16 @@ var (
 )
 
 const (
-	mockHandler           = "/apis/devices.kubeedge.io/v1alpha1/namespaces/default/devicemodels"
-	mockInstanceHandler   = "/apis/devices.kubeedge.io/v1alpha1/namespaces/default/devices"
+	mockHandler           = "/apis/devices.kubeedge.io/v1alpha2/namespaces/default/devicemodels"
+	mockInstanceHandler   = "/apis/devices.kubeedge.io/v1alpha2/namespaces/default/devices"
 	crdHandler            = "/apis/apiextensions.k8s.io/v1beta1/customresourcedefinitions"
 	appHandler            = "/api/v1/namespaces/default/pods"
 	nodeHandler           = "/api/v1/nodes"
 	deploymentHandler     = "/apis/apps/v1/namespaces/default/deployments"
 	deviceCRD             = "devices.devices.kubeedge.io"
 	deviceModelCRD        = "devicemodels.devices.kubeedge.io"
-	deviceModelPath       = "../../../../build/crds/devices/devices_v1alpha1_devicemodel.yaml"
-	deviceInstancePath    = "../../../../build/crds/devices/devices_v1alpha1_device.yaml"
+	deviceModelPath       = "../../../../build/crds/devices/devices_v1alpha2_devicemodel.yaml"
+	deviceInstancePath    = "../../../../build/crds/devices/devices_v1alpha2_device.yaml"
 	devMockInstancePath   = "./crds/deviceinstance.yaml"
 	devMockModelPath      = "./crds/devicemodel.yaml"
 	makeFilePath          = "../../../../mappers/bluetooth_mapper/"
@@ -83,7 +83,7 @@ func TestMapperCharacteristics(t *testing.T) {
 
 		//Generate Cerificates for Edge and Cloud nodes copy to respective folders
 		Expect(utils.GenerateCerts()).Should(BeNil())
-		//Do the neccessary config changes in Cloud and Edge nodes
+		//Do the necessary config changes in Cloud and Edge nodes
 		Expect(utils.DeploySetup(ctx, nodeName, "deployment")).Should(BeNil())
 
 		//Apply CRD for devicemodel
@@ -98,7 +98,7 @@ func TestMapperCharacteristics(t *testing.T) {
 		req.Header.Set("Content-Type", "application/yaml")
 		resp, err := client.Do(req)
 		Expect(err).To(BeNil())
-		utils.Infof("%s %s %v in %v", req.Method, req.URL, resp.Status, time.Now().Sub(t))
+		utils.Infof("%s %s %v in %v", req.Method, req.URL, resp.Status, time.Since(t))
 		Expect(resp.StatusCode).Should(Equal(http.StatusCreated))
 
 		//Apply CRD for deviceinstance
@@ -113,7 +113,7 @@ func TestMapperCharacteristics(t *testing.T) {
 		req.Header.Set("Content-Type", "application/yaml")
 		resp, err = client.Do(req)
 		Expect(err).To(BeNil())
-		utils.Infof("%s %s %v in %v", req.Method, req.URL, resp.Status, time.Now().Sub(t))
+		utils.Infof("%s %s %v in %v", req.Method, req.URL, resp.Status, time.Since(t))
 		Expect(resp.StatusCode).Should(Equal(http.StatusCreated))
 
 		//Run ./cloudcore binary
@@ -124,14 +124,14 @@ func TestMapperCharacteristics(t *testing.T) {
 		Expect(err).Should(BeNil())
 
 		//Run ./edgecore after node registration
-		Expect(utils.StartEdgeCore()).Should(BeNil())
+		Expect(utils.StartEdgeCore(ctx.Cfg.K8SMasterForKubeEdge, nodeName)).Should(BeNil())
 
 		//Check node successfully registered or not
 		Eventually(func() string {
 			status := utils.CheckNodeReadyStatus(ctx.Cfg.K8SMasterForKubeEdge+nodeHandler, nodeName)
 			utils.Infof("Node Name: %v, Node Status: %v", nodeName, status)
 			return status
-		}, "60s", "4s").Should(Equal("Running"), "Node register to the k8s master is unsuccessfull !!")
+		}, "60s", "4s").Should(Equal("Running"), "Node register to the k8s master is unsuccessful !!")
 
 		// Adding label to node
 		utils.ApplyLabelToNode(ctx.Cfg.K8SMasterForKubeEdge+nodeHandler+"/"+nodeName, "bluetooth", "true")
@@ -182,7 +182,7 @@ func TestMapperCharacteristics(t *testing.T) {
 		resp, err = client.Do(req)
 		Expect(err).To(BeNil())
 		Expect(resp.StatusCode).Should(Equal(http.StatusCreated))
-		utils.Infof("%s %s %v in %v", req.Method, req.URL, resp.Status, time.Now().Sub(t))
+		utils.Infof("%s %s %v in %v", req.Method, req.URL, resp.Status, time.Since(t))
 
 		//apply CRD for mock deviceinstance
 		curPath = getpwd()
@@ -197,7 +197,7 @@ func TestMapperCharacteristics(t *testing.T) {
 		resp, err = client.Do(req)
 		Expect(err).To(BeNil())
 		Expect(resp.StatusCode).Should(Equal(http.StatusCreated))
-		utils.Infof("%s %s %v in %v", req.Method, req.URL, resp.Status, time.Now().Sub(t))
+		utils.Infof("%s %s %v in %v", req.Method, req.URL, resp.Status, time.Since(t))
 
 		//updating deployment file with edgenode name and dockerhubusername
 		curPath = getpwd()
@@ -228,7 +228,7 @@ func TestMapperCharacteristics(t *testing.T) {
 		utils.CheckPodDeleteState(ctx.Cfg.K8SMasterForKubeEdge+appHandler, podlist)
 
 		// Delete mock device instances created
-		var deviceList v1alpha1.DeviceList
+		var deviceList v1alpha2.DeviceList
 		deviceInstanceList, err := utils.GetDevice(&deviceList, ctx.Cfg.K8SMasterForKubeEdge+mockInstanceHandler, nil)
 		Expect(err).To(BeNil())
 		for _, device := range deviceInstanceList {
@@ -238,7 +238,7 @@ func TestMapperCharacteristics(t *testing.T) {
 		}
 
 		// Delete mock device model created
-		var deviceModelList v1alpha1.DeviceModelList
+		var deviceModelList v1alpha2.DeviceModelList
 		list, err := utils.GetDeviceModel(&deviceModelList, ctx.Cfg.K8SMasterForKubeEdge+mockHandler, nil)
 		Expect(err).To(BeNil())
 		for _, model := range list {
@@ -269,12 +269,12 @@ func TestMapperCharacteristics(t *testing.T) {
 			statuscode := utils.CheckNodeDeleteStatus(ctx.Cfg.K8SMasterForKubeEdge+nodeHandler, nodeName)
 			utils.Infof("Node Name: %v, Node Statuscode: %v", nodeName, statuscode)
 			return statuscode
-		}, "60s", "4s").Should(Equal(http.StatusNotFound), "Node register to the k8s master is unsuccessfull !!")
+		}, "60s", "4s").Should(Equal(http.StatusNotFound), "Node register to the k8s master is unsuccessful !!")
 
 		Expect(utils.CleanUp("deployment")).Should(BeNil())
 		time.Sleep(2 * time.Second)
 
-		utils.Infof("Cleanup is Successfull !!")
+		utils.Infof("Cleanup is Successful !!")
 	})
 	RunSpecs(t, "Kubeedge Mapper Test Suite")
 }

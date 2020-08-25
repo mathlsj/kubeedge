@@ -29,23 +29,38 @@ package edged
 
 import (
 	"bytes"
+	"context"
 	"fmt"
+	"io"
 	"io/ioutil"
+	"net"
+	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	v1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
 	"k8s.io/klog"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	podshelper "k8s.io/kubernetes/pkg/apis/core/pods"
+	v1qos "k8s.io/kubernetes/pkg/apis/core/v1/helper/qos"
 	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/fieldpath"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
+	"k8s.io/kubernetes/pkg/kubelet/images"
+	"k8s.io/kubernetes/pkg/kubelet/server/portforward"
+	"k8s.io/kubernetes/pkg/kubelet/server/remotecommand"
+	"k8s.io/kubernetes/pkg/kubelet/status"
+	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/kubelet/util/format"
 	"k8s.io/kubernetes/pkg/volume/util"
 	"k8s.io/kubernetes/pkg/volume/util/volumepathhandler"
@@ -59,6 +74,8 @@ import (
 const (
 	etcHostsPath  = "/etc/hosts"
 	systemdSuffix = ".slice"
+
+	windows = "windows"
 )
 
 // GetActivePods returns non-terminal pods
@@ -272,7 +289,7 @@ func makeMounts(pod *v1.Pod, podDir string, container *v1.Container, hostName, h
 	// - OS is not Windows
 	// Kubernetes will not mount /etc/hosts if:
 	// - when the Pod sandbox is being created, its IP is still unknown. Hence, PodIP will not have been set.
-	mountEtcHostsFile := len(podIP) > 0 && runtime.GOOS != "windows"
+	mountEtcHostsFile := len(podIP) > 0 && runtime.GOOS != windows
 	klog.Infof("container: %v/%v/%v podIP: %q creating hosts mount: %v", pod.Namespace, pod.Name, container.Name, podIP, mountEtcHostsFile)
 	mounts := []kubecontainer.Mount{}
 	for _, mount := range container.VolumeMounts {
@@ -336,7 +353,7 @@ func makeMounts(pod *v1.Pod, podDir string, container *v1.Container, hostName, h
 
 		// Docker Volume Mounts fail on Windows if it is not of the form C:/
 		containerPath := mount.MountPath
-		if runtime.GOOS == "windows" {
+		if runtime.GOOS == windows {
 			if (strings.HasPrefix(hostPath, "/") || strings.HasPrefix(hostPath, "\\")) && !strings.Contains(hostPath, ":") {
 				hostPath = "c:" + hostPath
 			}
@@ -378,7 +395,7 @@ func makeMounts(pod *v1.Pod, podDir string, container *v1.Container, hostName, h
 }
 
 func makeAbsolutePath(goos, path string) string {
-	if goos != "windows" {
+	if goos != windows {
 		return "/" + path
 	}
 	// These are all for windows
@@ -529,7 +546,7 @@ func (e *edged) IsPodDeleted(uid types.UID) bool {
 // removeOrphanedPodStatuses removes obsolete entries in podStatus where
 // the pod is no longer considered bound to this node.
 func (e *edged) removeOrphanedPodStatuses(pods []*v1.Pod) {
-	podUIDs := make(map[types.UID]bool)
+	podUIDs := make(map[types.UID]bool, len(pods))
 	for _, pod := range pods {
 		podUIDs[pod.UID] = true
 	}
@@ -539,13 +556,9 @@ func (e *edged) removeOrphanedPodStatuses(pods []*v1.Pod) {
 
 // GetPodCgroupParent gets pod cgroup parent from container manager.
 func (e *edged) GetPodCgroupParent(pod *v1.Pod) string {
-	ret := e.cgroupDriver
-	if edgedconfig.Get().RemoteRuntimeEndpoint == DockerShimEndpoint ||
-		edgedconfig.Get().RemoteRuntimeEndpoint == DockerShimEndpointDeprecated {
-		//always have a ".slice" suffix
-		ret = ret + systemdSuffix
-	}
-	return ret
+	pcm := e.containerManager.NewPodContainerManager()
+	_, cgroupParent := pcm.GetPodContainerName(pod)
+	return cgroupParent
 }
 
 // GenerateRunContainerOptions generates the RunContainerOptions, which can be used by
@@ -590,7 +603,7 @@ func (e *edged) GenerateRunContainerOptions(pod *v1.Pod, container *v1.Container
 
 	// Disabling adding TerminationMessagePath on Windows as these files would be mounted as docker volume and
 	// Docker for Windows has a bug where only directories can be mounted
-	if len(container.TerminationMessagePath) != 0 && runtime.GOOS != "windows" {
+	if len(container.TerminationMessagePath) != 0 && runtime.GOOS != windows {
 		p := e.getPodContainerDir(pod.UID, container.Name)
 		if err := os.MkdirAll(p, 0750); err != nil {
 			klog.Errorf("Error on creating %q: %v", p, err)
@@ -612,6 +625,10 @@ func (e *edged) GetPodDNS(pod *v1.Pod) (*runtimeapi.DNSConfig, error) {
 
 // Make the environment variables for a pod in the given namespace.
 func (e *edged) makeEnvironmentVariables(pod *v1.Pod, container *v1.Container, podIP string, podIPs []string) ([]kubecontainer.EnvVar, error) {
+	var result []kubecontainer.EnvVar
+
+	var err error
+
 	// Determine the final values of variables:
 	//
 	// 1.  Determine the final value of each variable:
@@ -622,27 +639,55 @@ func (e *edged) makeEnvironmentVariables(pod *v1.Pod, container *v1.Container, p
 	// 2.  Create the container's environment in the order variables are declared
 	// 3.  Add remaining service environment vars
 	var (
-		result      []kubecontainer.EnvVar
+		configMaps  = make(map[string]*v1.ConfigMap)
 		tmpEnv      = make(map[string]string)
 		mappingFunc = expansion.MappingFuncFor(tmpEnv)
 	)
+
 	for _, envVar := range container.Env {
 		runtimeVal := envVar.Value
 		if runtimeVal != "" {
 			// Step 1a: expand variable references
 			runtimeVal = expansion.Expand(runtimeVal, mappingFunc)
-			tmpEnv[envVar.Name] = runtimeVal
 		} else if envVar.ValueFrom != nil {
 			// Step 1b: resolve alternate env var sources
 			switch {
 			case envVar.ValueFrom.FieldRef != nil:
-				runtimeVal, err := e.podFieldSelectorRuntimeValue(envVar.ValueFrom.FieldRef, pod, podIP, podIPs)
+				runtimeVal, err = e.podFieldSelectorRuntimeValue(envVar.ValueFrom.FieldRef, pod, podIP, podIPs)
 				if err != nil {
 					return result, err
 				}
-				tmpEnv[envVar.Name] = runtimeVal
+			case envVar.ValueFrom.ConfigMapKeyRef != nil:
+				cm := envVar.ValueFrom.ConfigMapKeyRef
+				name := cm.Name
+				key := cm.Key
+				optional := cm.Optional != nil && *cm.Optional
+				configMap, ok := configMaps[name]
+				if !ok {
+					if e.kubeClient == nil {
+						return result, fmt.Errorf("Couldn't get configMap %v/%v, no kubeClient defined", pod.Namespace, name)
+					}
+					configMap, err = e.configMapManager.GetConfigMap(pod.Namespace, name)
+					if err != nil {
+						if apierrors.IsNotFound(err) && optional {
+							// ignore error when marked optional
+							continue
+						}
+						return result, err
+					}
+					configMaps[name] = configMap
+				}
+				runtimeVal, ok = configMap.Data[key]
+				if !ok {
+					if optional {
+						continue
+					}
+					return result, fmt.Errorf("Couldn't find key %v in ConfigMap %v/%v", key, pod.Namespace, name)
+				}
 			}
 		}
+
+		tmpEnv[envVar.Name] = runtimeVal
 	}
 
 	// Append the env vars
@@ -664,7 +709,12 @@ func (e *edged) podFieldSelectorRuntimeValue(fs *v1.ObjectFieldSelector, pod *v1
 		return pod.Spec.NodeName, nil
 	case "spec.serviceAccountName":
 		return pod.Spec.ServiceAccountName, nil
-	// TODO: Add status.hostIP here
+	case "status.hostIP":
+		hostIP, err := e.getHostIPByInterface()
+		if err != nil {
+			return "", err
+		}
+		return hostIP, nil
 	case "status.podIP":
 		return podIP, nil
 	case "status.podIPs":
@@ -704,4 +754,614 @@ func (e *edged) makeBlockVolumes(pod *v1.Pod, container *v1.Container, podVolume
 	}
 
 	return devices, nil
+}
+
+// convertStatusToAPIStatus creates an api PodStatus for the given pod from
+// the given internal pod status.  It is purely transformative and does not
+// alter the kubelet state at all.
+func (e *edged) convertStatusToAPIStatus(pod *v1.Pod, podStatus *kubecontainer.PodStatus) *v1.PodStatus {
+	var apiPodStatus v1.PodStatus
+
+	hostIP, err := e.getHostIPByInterface()
+	if err != nil {
+		klog.Errorf("Failed to get host IP: %v", err)
+	} else {
+		apiPodStatus.HostIP = hostIP
+
+		apiPodStatus.PodIPs = make([]v1.PodIP, 0, len(podStatus.IPs))
+		for _, ip := range podStatus.IPs {
+			apiPodStatus.PodIPs = append(apiPodStatus.PodIPs, v1.PodIP{
+				IP: ip,
+			})
+		}
+
+		if len(apiPodStatus.PodIPs) > 0 {
+			apiPodStatus.PodIP = apiPodStatus.PodIPs[0].IP
+		}
+
+		if pod.Spec.HostNetwork && apiPodStatus.PodIP == "" {
+			apiPodStatus.PodIP = hostIP
+		}
+	}
+	// set status for Pods created on versions of kube older than 1.6
+	apiPodStatus.QOSClass = v1qos.GetPodQOS(pod)
+
+	oldPodStatus, found := e.statusManager.GetPodStatus(pod.UID)
+	if !found {
+		oldPodStatus = pod.Status
+	}
+
+	apiPodStatus.ContainerStatuses = e.convertToAPIContainerStatuses(
+		pod, podStatus,
+		oldPodStatus.ContainerStatuses,
+		pod.Spec.Containers,
+		len(pod.Spec.InitContainers) > 0,
+		false,
+	)
+	apiPodStatus.InitContainerStatuses = e.convertToAPIContainerStatuses(
+		pod, podStatus,
+		oldPodStatus.InitContainerStatuses,
+		pod.Spec.InitContainers,
+		len(pod.Spec.InitContainers) > 0,
+		true,
+	)
+
+	return &apiPodStatus
+}
+
+// convertToAPIContainerStatuses converts the given internal container
+// statuses into API container statuses.
+func (e *edged) convertToAPIContainerStatuses(pod *v1.Pod, podStatus *kubecontainer.PodStatus, previousStatus []v1.ContainerStatus, containers []v1.Container, hasInitContainers, isInitContainer bool) []v1.ContainerStatus {
+	convertContainerStatus := func(cs *kubecontainer.ContainerStatus) *v1.ContainerStatus {
+		cid := cs.ID.String()
+		cstatus := &v1.ContainerStatus{
+			Name:         cs.Name,
+			RestartCount: int32(cs.RestartCount),
+			Image:        cs.Image,
+			ImageID:      cs.ImageID,
+			ContainerID:  cid,
+		}
+		switch cs.State {
+		case kubecontainer.ContainerStateRunning:
+			cstatus.State.Running = &v1.ContainerStateRunning{StartedAt: metav1.NewTime(cs.StartedAt)}
+			cstatus.Ready = true
+		case kubecontainer.ContainerStateCreated:
+			// Treat containers in the "created" state as if they are exited.
+			// The pod workers are supposed start all containers it creates in
+			// one sync (syncPod) iteration. There should not be any normal
+			// "created" containers when the pod worker generates the status at
+			// the beginning of a sync iteration.
+			fallthrough
+		case kubecontainer.ContainerStateExited:
+			cstatus.State.Terminated = &v1.ContainerStateTerminated{
+				ExitCode:    int32(cs.ExitCode),
+				Reason:      cs.Reason,
+				Message:     cs.Message,
+				StartedAt:   metav1.NewTime(cs.StartedAt),
+				FinishedAt:  metav1.NewTime(cs.FinishedAt),
+				ContainerID: cid,
+			}
+		default:
+			cstatus.State.Waiting = &v1.ContainerStateWaiting{}
+		}
+		return cstatus
+	}
+
+	// Fetch old containers statuses from old pod status.
+	oldStatuses := make(map[string]v1.ContainerStatus, len(containers))
+	for _, cstatus := range previousStatus {
+		oldStatuses[cstatus.Name] = cstatus
+	}
+
+	// Set all container statuses to default waiting state
+	statuses := make(map[string]*v1.ContainerStatus, len(containers))
+	defaultWaitingState := v1.ContainerState{Waiting: &v1.ContainerStateWaiting{Reason: "ContainerCreating"}}
+	if hasInitContainers {
+		defaultWaitingState = v1.ContainerState{Waiting: &v1.ContainerStateWaiting{Reason: "PodInitializing"}}
+	}
+
+	for _, container := range containers {
+		cstatus := &v1.ContainerStatus{
+			Name:  container.Name,
+			Image: container.Image,
+			State: defaultWaitingState,
+		}
+		oldStatus, found := oldStatuses[container.Name]
+		if found {
+			if oldStatus.State.Terminated != nil {
+				// Do not update status on terminated init containers as
+				// they be removed at any time.
+				cstatus = &oldStatus
+			} else {
+				// Apply some values from the old statuses as the default values.
+				cstatus.RestartCount = oldStatus.RestartCount
+				cstatus.LastTerminationState = oldStatus.LastTerminationState
+			}
+		}
+		statuses[container.Name] = cstatus
+	}
+
+	// Make the latest container status comes first.
+	sort.Sort(sort.Reverse(kubecontainer.SortContainerStatusesByCreationTime(podStatus.ContainerStatuses)))
+	// Set container statuses according to the statuses seen in pod status
+	containerSeen := map[string]int{}
+	for _, cStatus := range podStatus.ContainerStatuses {
+		cName := cStatus.Name
+		if _, ok := statuses[cName]; !ok {
+			// This would also ignore the infra container.
+			continue
+		}
+		if containerSeen[cName] >= 2 {
+			continue
+		}
+		cstatus := convertContainerStatus(cStatus)
+		if containerSeen[cName] == 0 {
+			statuses[cName] = cstatus
+		} else {
+			statuses[cName].LastTerminationState = cstatus.State
+		}
+		containerSeen[cName] = containerSeen[cName] + 1
+	}
+
+	// Handle the containers failed to be started, which should be in Waiting state.
+	for _, container := range containers {
+		if isInitContainer {
+			// If the init container is terminated with exit code 0, it won't be restarted.
+			// TODO(random-liu): Handle this in a cleaner way.
+			s := podStatus.FindContainerStatusByName(container.Name)
+			if s != nil && s.State == kubecontainer.ContainerStateExited && s.ExitCode == 0 {
+				continue
+			}
+		}
+		// If a container should be restarted in next syncpod, it is *Waiting*.
+		if !kubecontainer.ShouldContainerBeRestarted(&container, pod, podStatus) {
+			continue
+		}
+		cstatus := statuses[container.Name]
+		if cstatus.State.Terminated != nil {
+			cstatus.LastTerminationState = cstatus.State
+		}
+		statuses[container.Name] = cstatus
+	}
+
+	var containerStatuses []v1.ContainerStatus
+	for _, cstatus := range statuses {
+		containerStatuses = append(containerStatuses, *cstatus)
+	}
+
+	// Sort the container statuses since clients of this interface expect the list
+	// of containers in a pod has a deterministic order.
+	if isInitContainer {
+		kubetypes.SortInitContainerStatuses(pod, containerStatuses)
+	} else {
+		sort.Sort(kubetypes.SortedContainerStatuses(containerStatuses))
+	}
+	return containerStatuses
+}
+
+func (e *edged) updatePodStatus(pod *v1.Pod) error {
+	var podStatus *v1.PodStatus
+	var newStatus v1.PodStatus
+	var podStatusRemote *kubecontainer.PodStatus
+	var err error
+	if e.containerRuntime != nil {
+		podStatusRemote, err = e.containerRuntime.GetPodStatus(pod.UID, pod.Name, pod.Namespace)
+		if err != nil {
+			containerStatus := &kubecontainer.ContainerStatus{}
+			kubeStatus := toKubeContainerStatus(v1.PodUnknown, containerStatus)
+			podStatus = &v1.PodStatus{Phase: v1.PodUnknown, ContainerStatuses: []v1.ContainerStatus{kubeStatus}}
+		} else {
+			if pod.DeletionTimestamp != nil {
+				containerStatus := &kubecontainer.ContainerStatus{State: kubecontainer.ContainerStateExited,
+					Reason: "Completed"}
+				kubeStatus := toKubeContainerStatus(v1.PodSucceeded, containerStatus)
+				podStatus = &v1.PodStatus{Phase: v1.PodSucceeded, ContainerStatuses: []v1.ContainerStatus{kubeStatus}}
+			} else {
+				podStatus = e.convertStatusToAPIStatus(pod, podStatusRemote)
+				// Assume info is ready to process
+				spec := &pod.Spec
+				allStatus := append(append([]v1.ContainerStatus{}, podStatus.ContainerStatuses...), podStatus.InitContainerStatuses...)
+				podStatus.Phase = getPhase(spec, allStatus)
+				// Check for illegal phase transition
+				if pod.Status.Phase == v1.PodFailed || pod.Status.Phase == v1.PodSucceeded {
+					// API server shows terminal phase; transitions are not allowed
+					if podStatus.Phase != pod.Status.Phase {
+						klog.Errorf("Pod attempted illegal phase transition from %s to %s: %v", pod.Status.Phase, podStatus.Phase, podStatus)
+						// Force back to phase from the API server
+						podStatus.Phase = pod.Status.Phase
+					}
+				}
+			}
+		}
+	}
+
+	newStatus = *podStatus.DeepCopy()
+
+	e.probeManager.UpdatePodStatus(pod.UID, &newStatus)
+	if e.containerRuntime != nil {
+		spec := &pod.Spec
+		newStatus.Conditions = append(newStatus.Conditions, status.GeneratePodInitializedCondition(spec, newStatus.InitContainerStatuses, newStatus.Phase))
+		newStatus.Conditions = append(newStatus.Conditions, status.GeneratePodReadyCondition(spec, newStatus.Conditions, newStatus.ContainerStatuses, newStatus.Phase))
+		//newStatus.Conditions = append(newStatus.Conditions, status.GenerateContainersReadyCondition(spec, newStatus.ContainerStatuses, newStatus.Phase))
+		newStatus.Conditions = append(newStatus.Conditions, v1.PodCondition{
+			Type:   v1.PodScheduled,
+			Status: v1.ConditionTrue,
+		})
+	}
+	pod.Status = newStatus
+	e.statusManager.SetPodStatus(pod, newStatus)
+	return err
+}
+
+func toKubeContainerStatus(phase v1.PodPhase, status *kubecontainer.ContainerStatus) v1.ContainerStatus {
+	kubeStatus := v1.ContainerStatus{
+		Name:         status.Name,
+		RestartCount: int32(status.RestartCount),
+		ImageID:      status.ImageID,
+		Image:        status.Image,
+		ContainerID:  status.ID.ID,
+	}
+
+	switch phase {
+	case v1.PodRunning:
+		kubeStatus.State.Running = &v1.ContainerStateRunning{StartedAt: metav1.Time{Time: status.StartedAt}}
+		kubeStatus.Ready = true
+	case v1.PodFailed, v1.PodSucceeded:
+		kubeStatus.State.Terminated = &v1.ContainerStateTerminated{
+			ExitCode:    int32(status.ExitCode),
+			Reason:      status.Reason,
+			Message:     status.Message,
+			StartedAt:   metav1.Time{Time: status.StartedAt},
+			FinishedAt:  metav1.Time{Time: status.FinishedAt},
+			ContainerID: status.ID.ID,
+		}
+	default:
+		kubeStatus.State.Waiting = &v1.ContainerStateWaiting{
+			Reason:  status.Reason,
+			Message: status.Message,
+		}
+	}
+	return kubeStatus
+}
+
+// getPhase returns the phase of a pod given its container info.
+func getPhase(spec *v1.PodSpec, info []v1.ContainerStatus) v1.PodPhase {
+	initialized := 0
+	pendingInitialization := 0
+	failedInitialization := 0
+	for _, container := range spec.InitContainers {
+		containerStatus, ok := podutil.GetContainerStatus(info, container.Name)
+		if !ok {
+			pendingInitialization++
+			continue
+		}
+
+		switch {
+		case containerStatus.State.Running != nil:
+			pendingInitialization++
+		case containerStatus.State.Terminated != nil:
+			if containerStatus.State.Terminated.ExitCode == 0 {
+				initialized++
+			} else {
+				failedInitialization++
+			}
+		case containerStatus.State.Waiting != nil:
+			if containerStatus.LastTerminationState.Terminated != nil {
+				if containerStatus.LastTerminationState.Terminated.ExitCode == 0 {
+					initialized++
+				} else {
+					failedInitialization++
+				}
+			} else {
+				pendingInitialization++
+			}
+		default:
+			pendingInitialization++
+		}
+	}
+
+	unknown := 0
+	running := 0
+	waiting := 0
+	stopped := 0
+	failed := 0
+	succeeded := 0
+	for _, container := range spec.Containers {
+		containerStatus, ok := podutil.GetContainerStatus(info, container.Name)
+		if !ok {
+			unknown++
+			continue
+		}
+
+		switch {
+		case containerStatus.State.Running != nil:
+			running++
+		case containerStatus.State.Terminated != nil:
+			stopped++
+			if containerStatus.State.Terminated.ExitCode == 0 {
+				succeeded++
+			} else {
+				failed++
+			}
+		case containerStatus.State.Waiting != nil:
+			if containerStatus.LastTerminationState.Terminated != nil {
+				stopped++
+			} else {
+				waiting++
+			}
+		default:
+			unknown++
+		}
+	}
+
+	if failedInitialization > 0 && spec.RestartPolicy == v1.RestartPolicyNever {
+		return v1.PodFailed
+	}
+
+	switch {
+	case pendingInitialization > 0:
+		fallthrough
+	case waiting > 0:
+		klog.Info("pod waiting > 0, pending")
+		// One or more containers has not been started
+		return v1.PodPending
+	case running > 0 && unknown == 0:
+		// All containers have been started, and at least
+		// one container is running
+		return v1.PodRunning
+	case running == 0 && stopped > 0 && unknown == 0:
+		// All containers are terminated
+		if spec.RestartPolicy == v1.RestartPolicyAlways {
+			// All containers are in the process of restarting
+			return v1.PodRunning
+		}
+		if stopped == succeeded {
+			// RestartPolicy is not Always, and all
+			// containers are terminated in success
+			return v1.PodSucceeded
+		}
+		if spec.RestartPolicy == v1.RestartPolicyNever {
+			// RestartPolicy is Never, and all containers are
+			// terminated with at least one in failure
+			return v1.PodFailed
+		}
+		// RestartPolicy is OnFailure, and at least one in failure
+		// and in the process of restarting
+		return v1.PodRunning
+	default:
+		klog.Info("pod default case, pending")
+		return v1.PodPending
+	}
+}
+
+func (e *edged) getHostIPByInterface() (string, error) {
+	iface, err := net.InterfaceByName(e.interfaceName)
+	if err != nil {
+		return "", fmt.Errorf("failed to get network interface: %v err:%v", e.interfaceName, err)
+	}
+	if iface == nil {
+		return "", fmt.Errorf("input iface is nil")
+	}
+
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return "", err
+	}
+	for _, addr := range addrs {
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err != nil {
+			continue
+		}
+		if ip.To4() != nil {
+			return ip.String(), nil
+		}
+	}
+	return "", fmt.Errorf("no ip and mask in this network card")
+}
+
+// findContainer finds and returns the container with the given pod ID, full name, and container name.
+// It returns nil if not found.
+func (e *edged) findContainer(podFullName string, podUID types.UID, containerName string) (*kubecontainer.Container, error) {
+	pods, err := e.containerRuntime.GetPods(false)
+	if err != nil {
+		return nil, err
+	}
+	// Resolve and type convert back again.
+	// We need the static pod UID but the kubecontainer API works with types.UID.
+	podUID = types.UID(e.podManager.TranslatePodUID(podUID))
+	pod := kubecontainer.Pods(pods).FindPod(podFullName, podUID)
+	return pod.FindContainerByName(containerName), nil
+}
+
+// RunInContainer runs a command in a container, returns the combined stdout, stderr as an array of bytes
+func (e *edged) RunInContainer(podFullName string, podUID types.UID, containerName string, cmd []string) ([]byte, error) {
+	container, err := e.findContainer(podFullName, podUID, containerName)
+	if err != nil {
+		return nil, err
+	}
+	if container == nil {
+		return nil, fmt.Errorf("container not found (%q)", containerName)
+	}
+	// TODO(tallclair): Pass a proper timeout value.
+	return e.runner.RunInContainer(container.ID, cmd, 0)
+}
+
+// GetKubeletContainerLogs returns logs from the container
+// TODO: this method is returning logs of random container attempts, when it should be returning the most recent attempt
+// or all of them.
+func (e *edged) GetKubeletContainerLogs(ctx context.Context, podFullName, containerName string, logOptions *v1.PodLogOptions, stdout, stderr io.Writer) error {
+	// Pod workers periodically write status to statusManager. If status is not
+	// cached there, something is wrong (or kubelet just restarted and hasn't
+	// caught up yet). Just assume the pod is not ready yet.
+	name, namespace, err := kubecontainer.ParsePodFullName(podFullName)
+	if err != nil {
+		return fmt.Errorf("unable to parse pod full name %q: %v", podFullName, err)
+	}
+
+	pod, ok := e.GetPodByName(namespace, name)
+	if !ok {
+		return fmt.Errorf("pod %q cannot be found - no logs available", name)
+	}
+
+	podUID := pod.UID
+	if mirrorPod, ok := e.podManager.GetMirrorPodByPod(pod); ok {
+		podUID = mirrorPod.UID
+	}
+	podStatus, found := e.statusManager.GetPodStatus(podUID)
+	if !found {
+		// If there is no cached status, use the status from the
+		// apiserver. This is useful if kubelet has recently been
+		// restarted.
+		podStatus = pod.Status
+	}
+
+	// TODO: Consolidate the logic here with kuberuntime.GetContainerLogs, here we convert container name to containerID,
+	// but inside kuberuntime we convert container id back to container name and restart count.
+	// TODO: After separate container log lifecycle management, we should get log based on the existing log files
+	// instead of container status.
+	containerID, err := e.validateContainerLogStatus(pod.Name, &podStatus, containerName, logOptions.Previous)
+	if err != nil {
+		return err
+	}
+
+	// Do a zero-byte write to stdout before handing off to the container runtime.
+	// This ensures at least one Write call is made to the writer when copying starts,
+	// even if we then block waiting for log output from the container.
+	if _, err := stdout.Write([]byte{}); err != nil {
+		return err
+	}
+
+	if e.dockerLegacyService != nil {
+		// dockerLegacyService should only be non-nil when we actually need it, so
+		// inject it into the runtimeService.
+		// TODO(random-liu): Remove this hack after deprecating unsupported log driver.
+		return e.dockerLegacyService.GetContainerLogs(ctx, pod, containerID, logOptions, stdout, stderr)
+	}
+	return e.containerRuntime.GetContainerLogs(ctx, pod, containerID, logOptions, stdout, stderr)
+}
+
+func (e *edged) ServeLogs(w http.ResponseWriter, req *http.Request) {
+}
+
+func (e *edged) GetExec(podFullName string, podUID types.UID, containerName string, cmd []string, streamOpts remotecommand.Options) (*url.URL, error) {
+	container, err := e.findContainer(podFullName, podUID, containerName)
+	if err != nil {
+		return nil, err
+	}
+	if container == nil {
+		return nil, fmt.Errorf("container not found (%q)", containerName)
+	}
+	return e.streamingRuntime.GetExec(container.ID, cmd, streamOpts.Stdin, streamOpts.Stdout, streamOpts.Stderr, streamOpts.TTY)
+}
+
+func (e *edged) GetAttach(podFullName string, podUID types.UID, containerName string, streamOpts remotecommand.Options) (*url.URL, error) {
+	panic("GetAttach need to be implemented")
+}
+
+func (e *edged) GetPortForward(podName, podNamespace string, podUID types.UID, portForwardOpts portforward.V4Options) (*url.URL, error) {
+	panic("GetPortForward need to be implemented")
+}
+
+// validateContainerLogStatus returns the container ID for the desired container to retrieve logs for, based on the state
+// of the container. The previous flag will only return the logs for the last terminated container, otherwise, the current
+// running container is preferred over a previous termination. If info about the container is not available then a specific
+// error is returned to the end user.
+func (e *edged) validateContainerLogStatus(podName string, podStatus *v1.PodStatus, containerName string, previous bool) (containerID kubecontainer.ContainerID, err error) {
+	var cID string
+
+	cStatus, found := podutil.GetContainerStatus(podStatus.ContainerStatuses, containerName)
+	if !found {
+		cStatus, found = podutil.GetContainerStatus(podStatus.InitContainerStatuses, containerName)
+	}
+	if !found && utilfeature.DefaultFeatureGate.Enabled(features.EphemeralContainers) {
+		cStatus, found = podutil.GetContainerStatus(podStatus.EphemeralContainerStatuses, containerName)
+	}
+	if !found {
+		return kubecontainer.ContainerID{}, fmt.Errorf("container %q in pod %q is not available", containerName, podName)
+	}
+	lastState := cStatus.LastTerminationState
+	waiting, running, terminated := cStatus.State.Waiting, cStatus.State.Running, cStatus.State.Terminated
+
+	switch {
+	case previous:
+		if lastState.Terminated == nil || lastState.Terminated.ContainerID == "" {
+			return kubecontainer.ContainerID{}, fmt.Errorf("previous terminated container %q in pod %q not found", containerName, podName)
+		}
+		cID = lastState.Terminated.ContainerID
+
+	case running != nil:
+		cID = cStatus.ContainerID
+
+	case terminated != nil:
+		// in cases where the next container didn't start, terminated.ContainerID will be empty, so get logs from the lastState.Terminated.
+		if terminated.ContainerID == "" {
+			if lastState.Terminated != nil && lastState.Terminated.ContainerID != "" {
+				cID = lastState.Terminated.ContainerID
+			} else {
+				return kubecontainer.ContainerID{}, fmt.Errorf("container %q in pod %q is terminated", containerName, podName)
+			}
+		} else {
+			cID = terminated.ContainerID
+		}
+
+	case lastState.Terminated != nil:
+		if lastState.Terminated.ContainerID == "" {
+			return kubecontainer.ContainerID{}, fmt.Errorf("container %q in pod %q is terminated", containerName, podName)
+		}
+		cID = lastState.Terminated.ContainerID
+
+	case waiting != nil:
+		// output some info for the most common pending failures
+		switch reason := waiting.Reason; reason {
+		case images.ErrImagePull.Error():
+			return kubecontainer.ContainerID{}, fmt.Errorf("container %q in pod %q is waiting to start: image can't be pulled", containerName, podName)
+		case images.ErrImagePullBackOff.Error():
+			return kubecontainer.ContainerID{}, fmt.Errorf("container %q in pod %q is waiting to start: trying and failing to pull image", containerName, podName)
+		default:
+			return kubecontainer.ContainerID{}, fmt.Errorf("container %q in pod %q is waiting to start: %v", containerName, podName, reason)
+		}
+	default:
+		// unrecognized state
+		return kubecontainer.ContainerID{}, fmt.Errorf("container %q in pod %q is waiting to start - no logs yet", containerName, podName)
+	}
+
+	return kubecontainer.ParseContainerID(cID), nil
+}
+
+// PodResourcesAreReclaimed returns true if all required node-level resources that a pod was consuming have
+// been reclaimed by the kubelet.  Reclaiming resources is a prerequisite to deleting a pod from the API server.
+func (e *edged) PodResourcesAreReclaimed(pod *v1.Pod, status v1.PodStatus) bool {
+	if !notRunning(status.ContainerStatuses) {
+		// We shouldn't delete pods that still have running containers
+		klog.V(3).Infof("Pod %q is terminated, but some containers are still running", format.Pod(pod))
+		return false
+	}
+	// pod's containers should be deleted
+	runtimeStatus, err := e.podCache.Get(pod.UID)
+	if err != nil {
+		klog.V(3).Infof("Pod %q is terminated, Error getting runtimeStatus from the podCache: %s", format.Pod(pod), err)
+		return false
+	}
+	if len(runtimeStatus.ContainerStatuses) > 0 {
+		var statusStr string
+		for _, status := range runtimeStatus.ContainerStatuses {
+			statusStr += fmt.Sprintf("%+v ", *status)
+		}
+		klog.V(3).Infof("Pod %q is terminated, but some containers have not been cleaned up: %s", format.Pod(pod), statusStr)
+		return false
+	}
+	if e.podVolumesExist(pod.UID) {
+		// We shouldn't delete pods whose volumes have not been cleaned up if we are not keeping terminated pod volumes
+		klog.V(3).Infof("Pod %q is terminated, but some volumes have not been cleaned up", format.Pod(pod))
+		return false
+	}
+
+	if edgedconfig.Config.CgroupsPerQOS {
+		pcm := e.containerManager.NewPodContainerManager()
+		if pcm.Exists(pod) {
+			klog.V(3).Infof("Pod %q is terminated, but pod cgroup sandbox has not been cleaned up", format.Pod(pod))
+			return false
+		}
+	}
+	return true
 }

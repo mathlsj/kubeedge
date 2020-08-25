@@ -1,45 +1,28 @@
 package config
 
 import (
-	"fmt"
-	"os"
 	"sync"
 
-	"k8s.io/klog"
-
-	"github.com/kubeedge/beehive/pkg/common/config"
+	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha1"
 )
 
-var c Configure
+var Config Configure
 var once sync.Once
 
 type Configure struct {
-	NodeID string
+	v1alpha1.DeviceTwin
+	NodeName string
 }
 
-func InitConfigure() {
+func InitConfigure(deviceTwin *v1alpha1.DeviceTwin, nodeName string) {
 	once.Do(func() {
-		var errs []error
-
-		nodeID, err := config.CONFIG.GetValue("edgehub.controller.node-id").ToString()
-		if err != nil {
-			errs = append(errs, fmt.Errorf("get edgehub.controller.node-id key error %v", err))
+		Config = Configure{
+			DeviceTwin: *deviceTwin,
+			NodeName:   nodeName,
 		}
-
-		if len(errs) != 0 {
-			for _, e := range errs {
-				klog.Errorf("%v", e)
-			}
-			klog.Error("init devicetwin config error")
-			os.Exit(1)
-		}
-		c = Configure{
-			NodeID: nodeID,
-		}
-		klog.Infof("init devicetwin config successfully，config info %++v", c)
 	})
 }
 
 func Get() *Configure {
-	return &c
+	return &Config
 }
