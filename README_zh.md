@@ -10,6 +10,9 @@
 
 KubeEdge 是一个开源的系统，可将本机容器化应用编排和管理扩展到边缘端设备。 它基于Kubernetes构建，为网络和应用程序提供核心基础架构支持，并在云端和边缘端部署应用，同步元数据。KubeEdge 还支持 **MQTT** 协议，允许开发人员编写客户逻辑，并在边缘端启用设备通信的资源约束。KubeEdge 包含云端和边缘端两部分。
 
+注意：
+1.3以前的版本不再支持，请尝试升级到支持版本。
+
 ## 优势
 
 ### 边缘计算
@@ -55,11 +58,11 @@ KubeEdge 由以下组件构成:
 
 ### Kubernetes 版本兼容
 
-|                     | Kubernetes 1.12 | Kubernetes 1.13 | Kubernetes 1.14 | Kubernetes 1.15 | Kubernetes 1.16 | Kubernetes 1.17 | Kubernetes 1.18 |
+|                     | Kubernetes 1.13 | Kubernetes 1.14 | Kubernetes 1.15 | Kubernetes 1.16 | Kubernetes 1.17 | Kubernetes 1.18 | Kubernetes 1.19 |
 |---------------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|
-| KubeEdge 1.2        | ✓               | ✓              | ✓               | ✓               | ✓               | -               | -               |
-| KubeEdge 1.3        | ✓               | ✓              | ✓               | ✓               | ✓              | ✓               | ✓               |
+| KubeEdge 1.3        | ✓               | ✓              | ✓               | ✓               | ✓               | ✓               | ✓              |
 | KubeEdge 1.4        | ✓               | ✓              | ✓               | ✓               | ✓              | ✓               | ✓               |
+| KubeEdge 1.5        | ✓               | ✓              | ✓               | ✓               | ✓              | ✓               | ✓               |
 | KubeEdge HEAD       | ✓               | ✓              | ✓               | ✓               | ✓              | ✓               | ✓               |
 
 说明:
@@ -101,14 +104,14 @@ KubeEdge 由以下组件构成:
 
 ## 文档
 
-通过该链接 [https://docs.kubeedge.io](https://docs.kubeedge.io) 可用找到有关 KubeEdge 的各个模块的详细信息。
+从此[文档](./doc/getting-started.md)开始你的KubeEdge之旅！
+访问[https://docs.kubeedge.io](https://docs.kubeedge.io) 获得更多详细信息。
 一些说明 KubeEdge 平台的使用案例的示例应用程序和演示可以在[这个仓库](https://github.com/kubeedge/examples) 中找到。
 
 ## 支持
 
-<!--
-如果您需要支持，请从 [故障排除指南] 开始，然后按照我们概述的流程进行操作。
--->
+如果您需要支持，请从 [故障排除指南](./docs/troubleshooting.md) 开始，然后按照我们概述的流程进行操作。
+
 如果您有任何疑问，请以下方式与我们联系：
 
 - [mailing list](https://groups.google.com/forum/#!forum/kubeedge)

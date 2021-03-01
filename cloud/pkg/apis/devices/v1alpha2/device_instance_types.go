@@ -19,7 +19,7 @@ package v1alpha2
 import (
 	"encoding/json"
 
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -275,10 +275,10 @@ type BluetoothReadConverter struct {
 	EndIndex int `json:"endIndex,omitempty"`
 	// Refers to the number of bits to shift left, if left-shift operation is necessary for conversion
 	// +optional
-	ShiftLeft int `json:"shiftLeft,omitempty"`
+	ShiftLeft uint `json:"shiftLeft,omitempty"`
 	// Refers to the number of bits to shift right, if right-shift operation is necessary for conversion
 	// +optional
-	ShiftRight int `json:"shiftRight,omitempty"`
+	ShiftRight uint `json:"shiftRight,omitempty"`
 	// Specifies in what order the operations(which are required to be performed to convert incoming data into understandable form) are performed
 	//+optional
 	OrderOfOperations []BluetoothOperations `json:"orderOfOperations,omitempty"`
@@ -378,7 +378,7 @@ type CustomizedValue map[string]interface{}
 
 func (in *CustomizedValue) DeepCopyInto(out *CustomizedValue) {
 	bytes, _ := json.Marshal(*in)
-	json.Unmarshal(bytes, out)
+	_ = json.Unmarshal(bytes, out)
 }
 
 func (in *CustomizedValue) DeepCopy() *CustomizedValue {

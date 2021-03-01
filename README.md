@@ -15,6 +15,12 @@ With KubeEdge it is easy to get and deploy existing complicated machine learning
 With business logic running at the Edge, much larger volumes of data can be secured & processed locally where the data is produced.
 With data processed at the Edge, the responsiveness is increased dramatically and data privacy is protected.
 
+KubeEdge is an incubation-level hosted project by the [Cloud Native Computing Foundation](https://cncf.io) (CNCF). KubeEdge incubation [announcement](https://www.cncf.io/blog/2020/09/16/toc-approves-kubeedge-as-incubating-project/) by CNCF.
+
+**Note**:
+
+The versions before *1.3* have not been supported, please try upgrade.
+
 ## Advantages
 
 - **Kubernetes-native support**: Managing edge applications and edge devices in the cloud with fully compatible Kubernetes APIs.
@@ -50,11 +56,11 @@ KubeEdge consists of cloud part and edge part.
 
 ## Kubernetes compatibility
 
-|                        | Kubernetes 1.12 | Kubernetes 1.13 | Kubernetes 1.14 | Kubernetes 1.15 | Kubernetes 1.16 | Kubernetes 1.17 | Kubernetes 1.18 |
+|                        | Kubernetes 1.13 | Kubernetes 1.14 | Kubernetes 1.15 | Kubernetes 1.16 | Kubernetes 1.17 | Kubernetes 1.18 | Kubernetes 1.19 |
 |------------------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|
-| KubeEdge 1.2           | ✓               | ✓               | ✓               | ✓               | ✓             | ✓               | ✓               |
 | KubeEdge 1.3           | ✓               | ✓               | ✓               | ✓               | ✓             | ✓               | ✓               |
 | KubeEdge 1.4           | ✓               | ✓               | ✓               | ✓               | ✓             | ✓               | ✓               |
+| KubeEdge 1.5           | ✓               | ✓               | ✓               | ✓               | ✓             | ✓               | ✓               |
 | KubeEdge HEAD (master) | ✓               | ✓               | ✓               | ✓               | ✓             | ✓               | ✓               |
 
 Key:
@@ -64,15 +70,15 @@ Key:
 
 ## Guides
 
-See our documentation on [kubeedge.io](https://kubeedge.io).
+Get start with this [doc](./docs/getting-started.md).
 
-**Quick Start** - Install KubeEdge with [keadm](./docs/setup/keadm.md).
+See our documentation on [kubeedge.io](https://kubeedge.io) for more details.
 
 To learn deeply about KubeEdge, try some examples on [examples](https://github.com/kubeedge/examples).
 
 ## Roadmap
 
-* [2020 Q2 Roadmap](./docs/roadmap.md#2020-q2-roadmap)
+* [2021 Roadmap](./docs/roadmap.md#roadmap)
 
 ## Meeting
 
@@ -90,11 +96,8 @@ Resources:
 
 ## Contact
 
-<!--
-We don't have a troubleshooting guide yet.  When we do, uncomment the following and add the link.
-If you need support, start with the [troubleshooting guide], and work your way through the process that we've outlined.
+If you need support, start with the [troubleshooting guide](./docs/troubleshooting.md), and work your way through the process that we've outlined.
 
--->
 If you have questions, feel free to reach out to us in the following ways:
 
 - [mailing list](https://groups.google.com/forum/#!forum/kubeedge)

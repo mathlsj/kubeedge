@@ -4,12 +4,12 @@ import (
 	"fmt"
 	"time"
 
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	connect "github.com/kubeedge/kubeedge/edge/pkg/common/cloudconnection"
-	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
+	messagepkg "github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/clients"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/config"
@@ -41,7 +41,7 @@ func (eh *EdgeHub) addKeepChannel(msgID string) chan model.Message {
 	eh.keeperLock.Lock()
 	defer eh.keeperLock.Unlock()
 
-	tempChannel := make(chan model.Message)
+	tempChannel := make(chan model.Message, 1)
 	eh.syncKeeper[msgID] = tempChannel
 
 	return tempChannel
@@ -81,9 +81,18 @@ func (eh *EdgeHub) sendToKeepChannel(message model.Message) error {
 }
 
 func (eh *EdgeHub) dispatch(message model.Message) error {
-	// TODO: dispatch message by the message type
-	md, ok := groupMap[message.GetGroup()]
-	if !ok {
+	group := message.GetGroup()
+	md := ""
+	switch group {
+	case messagepkg.ResourceGroupName:
+		md = modules.MetaGroup
+	case messagepkg.TwinGroupName:
+		md = modules.TwinGroup
+	case messagepkg.FuncGroupName:
+		md = modules.MetaGroup
+	case messagepkg.UserGroupName:
+		md = modules.BusGroup
+	default:
 		klog.Warningf("msg_group not found")
 		return fmt.Errorf("msg_group not found")
 	}
@@ -111,7 +120,7 @@ func (eh *EdgeHub) routeToEdge() {
 			return
 		}
 
-		klog.Infof("received msg from cloud-hub:%+v", message)
+		klog.V(4).Infof("[edgehub/routeToEdge] receive msg from cloud, msg:% +v", message)
 		err = eh.dispatch(message)
 		if err != nil {
 			klog.Errorf("failed to dispatch message, discard: %v", err)
@@ -121,6 +130,7 @@ func (eh *EdgeHub) routeToEdge() {
 
 func (eh *EdgeHub) sendToCloud(message model.Message) error {
 	eh.keeperLock.Lock()
+	klog.V(4).Infof("[edgehub/sendToCloud] send msg to cloud, msg: %+v", message)
 	err := eh.chClient.Send(message)
 	eh.keeperLock.Unlock()
 	if err != nil {
@@ -183,7 +193,7 @@ func (eh *EdgeHub) keepalive() {
 		default:
 		}
 		msg := model.NewMessage("").
-			BuildRouter(ModuleNameEdgeHub, "resource", "node", "keepalive").
+			BuildRouter(ModuleNameEdgeHub, "resource", "node", messagepkg.OperationKeepalive).
 			FillBody("ping")
 
 		// post message to cloud hub
@@ -206,8 +216,8 @@ func (eh *EdgeHub) pubConnectInfo(isConnected bool) {
 	}
 
 	for _, group := range groupMap {
-		message := model.NewMessage("").BuildRouter(message.SourceNodeConnection, group,
-			message.ResourceTypeNodeConnection, message.OperationNodeConnection).FillBody(content)
+		message := model.NewMessage("").BuildRouter(messagepkg.SourceNodeConnection, group,
+			messagepkg.ResourceTypeNodeConnection, messagepkg.OperationNodeConnection).FillBody(content)
 		beehiveContext.SendToGroup(group, *message)
 	}
 }

@@ -23,6 +23,7 @@ import (
 	"path"
 	"strconv"
 
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/kubeedge/kubeedge/common/constants"
@@ -51,6 +52,9 @@ func NewDefaultEdgeCoreConfig() *EdgeCoreConfig {
 		Modules: &Modules{
 			Edged: &Edged{
 				Enable:                      true,
+				Labels:                      map[string]string{},
+				Annotations:                 map[string]string{},
+				Taints:                      []v1.Taint{},
 				NodeStatusUpdateFrequency:   constants.DefaultNodeStatusUpdateFrequency,
 				RuntimeType:                 constants.DefaultRuntimeType,
 				DockerAddress:               constants.DefaultDockerAddress,
@@ -67,7 +71,6 @@ func NewDefaultEdgeCoreConfig() *EdgeCoreConfig {
 				HostnameOverride:            hostnameOverride,
 				RegisterNodeNamespace:       constants.DefaultRegisterNodeNamespace,
 				RegisterNode:                true,
-				InterfaceName:               constants.DefaultInterfaceName,
 				DevicePluginEnabled:         false,
 				GPUPluginEnabled:            false,
 				ImageGCHighThreshold:        constants.DefaultImageGCHighThreshold,
@@ -120,12 +123,23 @@ func NewDefaultEdgeCoreConfig() *EdgeCoreConfig {
 				MqttServerExternal:   "tcp://127.0.0.1:1883",
 				MqttServerInternal:   "tcp://127.0.0.1:1884",
 				MqttMode:             MqttModeExternal,
+				TLS: &EventBusTLS{
+					Enable:                false,
+					TLSMqttCAFile:         constants.DefaultMqttCAFile,
+					TLSMqttCertFile:       constants.DefaultMqttCertFile,
+					TLSMqttPrivateKeyFile: constants.DefaultMqttKeyFile,
+				},
 			},
 			MetaManager: &MetaManager{
 				Enable:                true,
 				ContextSendGroup:      metaconfig.GroupNameHub,
 				ContextSendModule:     metaconfig.ModuleNameEdgeHub,
 				PodStatusSyncInterval: constants.DefaultPodStatusSyncInterval,
+				RemoteQueryTimeout:    constants.DefaultRemoteQueryTimeout,
+				MetaServer: &MetaServer{
+					Enable: false,
+					Debug:  false,
+				},
 			},
 			ServiceBus: &ServiceBus{
 				Enable: false,
@@ -183,7 +197,6 @@ func NewMinEdgeCoreConfig() *EdgeCoreConfig {
 				ClusterDomain:         "",
 				PodSandboxImage:       util.GetPodSandboxImage(),
 				HostnameOverride:      hostnameOverride,
-				InterfaceName:         constants.DefaultInterfaceName,
 				DevicePluginEnabled:   false,
 				GPUPluginEnabled:      false,
 				CGroupDriver:          CGroupDriverCGroupFS,

@@ -32,12 +32,13 @@ application orchestration capabilities to hosts at Edge.
 
    setup/keadm
    setup/local
+   setup/upgrade
 
 .. toctree::
    :maxdepth: 1
    :caption: Configuration
 
-   KuBeEdge <configuration/kubeedge>
+   KubeEdge <configuration/kubeedge>
    CRI <configuration/cri>
    Storage <configuration/storage>
 
