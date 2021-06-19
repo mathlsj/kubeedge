@@ -1,8 +1,6 @@
 package edgecontroller
 
 import (
-	"os"
-
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/beehive/pkg/core"
@@ -20,30 +18,29 @@ type EdgeController struct {
 	downstream *controller.DownstreamController
 }
 
-func newEdgeController(enable bool) *EdgeController {
+func newEdgeController(enable bool, tunnelPort int) *EdgeController {
+	ec := &EdgeController{enable: enable}
 	if !enable {
-		return &EdgeController{enable: false}
+		return ec
 	}
-	upstream, err := controller.NewUpstreamController(informers.GetInformersManager().GetK8sInformerFactory())
+	var err error
+	ec.upstream, err = controller.NewUpstreamController(informers.GetInformersManager().GetK8sInformerFactory())
 	if err != nil {
-		klog.Errorf("new upstream controller failed with error: %s", err)
-		os.Exit(1)
+		klog.Fatalf("new upstream controller failed with error: %s", err)
 	}
-	downstream, err := controller.NewDownstreamController(informers.GetInformersManager().GetK8sInformerFactory(), informers.GetInformersManager(), informers.GetInformersManager().GetCRDInformerFactory())
+	ec.upstream.TunnelPort = tunnelPort
+
+	ec.downstream, err = controller.NewDownstreamController(informers.GetInformersManager().GetK8sInformerFactory(), informers.GetInformersManager(), informers.GetInformersManager().GetCRDInformerFactory())
 	if err != nil {
 		klog.Fatalf("new downstream controller failed with error: %s", err)
 	}
-	return &EdgeController{
-		enable:     enable,
-		upstream:   upstream,
-		downstream: downstream,
-	}
+	return ec
 }
 
-func Register(ec *v1alpha1.EdgeController) {
+func Register(ec *v1alpha1.EdgeController, commonConfig *v1alpha1.CommonConfig) {
 	// TODO move module config into EdgeController struct @kadisi
 	config.InitConfigure(ec)
-	core.Register(newEdgeController(ec.Enable))
+	core.Register(newEdgeController(ec.Enable, commonConfig.TunnelPort))
 }
 
 // Name of controller

@@ -82,6 +82,7 @@ func (c *ContainerExecConnection) Serve() error {
 		return err
 	}
 
+	var data [256]byte
 	for {
 		select {
 		case <-c.ctx.Done():
@@ -97,13 +98,12 @@ func (c *ContainerExecConnection) Serve() error {
 			klog.V(6).Infof("%s send close message to edge successfully", c.String())
 			return nil
 		case <-c.EdgePeerDone():
-			klog.V(6).Infof("%s find edge peer done, so stop this connection", c.String())
-			return nil
+			err = fmt.Errorf("%s find edge peer done, so stop this connection", c.String())
+			return err
 		default:
 		}
 		for {
-			data := make([]byte, 256)
-			n, err := c.Conn.Read(data)
+			n, err := c.Conn.Read(data[:])
 			if err != nil {
 				if err != io.EOF {
 					klog.Errorf("%s failed to read from client: %v", c.String(), err)

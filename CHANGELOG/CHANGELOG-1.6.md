@@ -1,3 +1,15 @@
+  * [v1.6.2](#v162)
+     * [Downloads for v1.6.2](#downloads-for-v162)
+        * [KubeEdge Binaries](#kubeedge-binaries)
+        * [Installer Binaries](#installer-binaries)
+     * [KubeEdge v1.6.2 Release Notes](#kubeedge-v162-release-notes)
+        * [Changelog since v1.6.1](#changelog-since-v161) 
+  * [v1.6.1](#v161)
+     * [Downloads for v1.6.1](#downloads-for-v161)
+        * [KubeEdge Binaries](#kubeedge-binaries)
+        * [Installer Binaries](#installer-binaries)
+     * [KubeEdge v1.6.1 Release Notes](#kubeedge-v161-release-notes)
+        * [Changelog since v1.6.0](#changelog-since-v160)  
   * [v1.6.0](#v160)
      * [Downloads for v1.6.0](#downloads-for-v160)
         * [KubeEdge Binaries](#kubeedge-binaries)
@@ -8,10 +20,9 @@
         * [Other Notable Changes](#other-notable-changes)
         * [Bug Fixes](#bug-fixes)
 
+# v1.6.2
 
-# v1.6.0
-
-## Downloads for v1.6.0
+## Downloads for v1.6.2
 
 ### KubeEdge Binaries
 | filename | Size | sha512 hash |
@@ -21,6 +32,68 @@
 ### Installer Binaries
 | filename | Size | sha512 hash |
 | -------- | ---- | ----------- |
+
+
+## KubeEdge v1.6.2 Release Notes
+
+### Changelog since v1.6.1
+
+- Bump k8s to 1.19.10 to fix metrics missing issue. ([#2824](https://github.com/kubeedge/kubeedge/pull/2824), [@fisherxu](https://github.com/fisherxu))
+- keadm: install CRDs corresponding to the version. ([#2805](https://github.com/kubeedge/kubeedge/pull/2805), [@daixiang0](https://github.com/daixiang0))
+
+
+# v1.6.1
+
+## Downloads for v1.6.1
+
+### KubeEdge Binaries
+| filename | Size | sha512 hash |
+| -------- | ---- | ----------- |
+| [kubeedge-v1.6.1-linux-arm64.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.1/kubeedge-v1.6.1-linux-arm64.tar.gz) |  82.8 MB | dba8a3009c63a37f709710b6c245e08c232d4a42c95103436e4a02d46655a1c77d1263dc85ec88d4ee0efe4457b5c8ad58985de639067678ed886695aa05a474 |
+| [kubeedge-v1.6.1-linux-arm.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.1/kubeedge-v1.6.1-linux-arm.tar.gz) | 81.4 MB | 7f65d213f904466d81b617bd2913edd0cb0a904278c77f4c47bc5bf56ddfae7dbcf797536766cedd1b89c4080ee92a24d3c7bad6ad86a65a9c7afacd93e3fead |
+| [kubeedge-v1.6.1-linux-amd64.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.1/kubeedge-v1.6.1-linux-amd64.tar.gz) | 48 MB | 1fa572e21abac67a0a60005177f38b0a209797ca43548b6812ea7da17d457a579a1c00d50684e7084d6b3b132cd2c6fcf7f749f26f31975b34970b98fccb9e93 |
+
+
+### Installer Binaries
+| filename | Size | sha512 hash |
+| -------- | ---- | ----------- |
+| [keadm-v1.6.1-linux-amd64.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.1/keadm-v1.6.1-linux-arm64.tar.gz) |  20 MB | 215dc4bd585a0a05f89c9be98da207bfef237b7f7a5a54ac23a31d9ac3b36c99b4ebd4d0bfef8f40d57bac49eccdc7cd45d46de7d25da197a0d103c8d91fb890 |
+| [keadm-v1.6.1-linux-amd64.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.1/keadm-v1.6.1-linux-arm.tar.gz) |  19.8 MB | 3a7805c72dd5ec7cb7be90fef5ef34f38daf36d81d174354de4829a0d226e9e2f9368dafae9e3641f64a7861279e65669bfe775008ac47659b38d47e91970f22 |
+| [keadm-v1.6.1-linux-amd64.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.1/keadm-v1.6.1-linux-amd64.tar.gz) |  11.6 MB | 55b21aee8f53bf3bae329342a528a4bf179b57065eaf599a7f3641a9608f85e15ddc863212b39f1b6bf3075eaa43226298c96b2ac05196b9ce37bdfb267d3d16 |
+
+
+## KubeEdge v1.6.1 Release Notes
+
+### Changelog since v1.6.0
+
+- Change image gc period to 5min. ([#2642](https://github.com/kubeedge/kubeedge/pull/2642), [@fisherxu](https://github.com/fisherxu))
+- GC running containers started by the previous cluster. ([#2659](https://github.com/kubeedge/kubeedge/pull/2659), [@fisherxu](https://github.com/fisherxu))
+- Fix the warning log when edgemesh is disabled. ([#2599](https://github.com/kubeedge/kubeedge/pull/2599), [@hackers365](https://github.com/hackers365))
+- Shorten the reconnect wait time when connect failed. ([#2641](https://github.com/kubeedge/kubeedge/pull/2641), [@fisherxu](https://github.com/fisherxu))
+- Install crd for router in keadm. ([#2608](https://github.com/kubeedge/kubeedge/pull/2608), [@fisherxu](https://github.com/fisherxu))
+- Remove syncKeeper in edgehub. ([#2614](https://github.com/kubeedge/kubeedge/pull/2614), [@fisherxu](https://github.com/fisherxu))
+- Fix watch issue. ([#2617](https://github.com/kubeedge/kubeedge/pull/2617), [@Abirdcfly](https://github.com/Abirdcfly))
+- fix keadm install edgecore. ([#2595](https://github.com/kubeedge/kubeedge/pull/2595), [@fisherxu](https://github.com/fisherxu))
+
+
+# v1.6.0
+
+## Downloads for v1.6.0
+
+### KubeEdge Binaries
+| filename | Size | sha512 hash |
+| -------- | ---- | ----------- |
+| [kubeedge-v1.6.0-linux-arm64.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.0/kubeedge-v1.6.0-linux-arm64.tar.gz) |  82.8 MB | e3b28a11c029da4cb66b26705512f26b4fbe1e25ed50cfa5f4a44847935381ccb3e54be976a8df1801fbc4690187f95b2b7685433382c2f728a7aa8ac182a380 |
+| [kubeedge-v1.6.0-linux-arm.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.0/kubeedge-v1.6.0-linux-arm.tar.gz) | 81.4 MB | 43314b2982ab68b8b4ca8041208388eec1b5c836041e89b98c475e43a7e6e5004f2b709327b562783b9f153cbbc658886f44b6a9e5029a2c7827847e1045cbb6 |
+| [kubeedge-v1.6.0-linux-amd64.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.0/kubeedge-v1.6.0-linux-amd64.tar.gz) | 48 MB | c8d3f4c902a4d74efcd78cab726a5ec37a144f5f86e12071f5805b1e730173e9e88d19192a493924c003df18a87ed269943475f695a2ba050e31f88c7515103a |
+
+
+### Installer Binaries
+| filename | Size | sha512 hash |
+| -------- | ---- | ----------- |
+| [keadm-v1.6.0-linux-amd64.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.0/keadm-v1.6.0-linux-arm64.tar.gz) |  20 MB | c16b00f14141f7d503b2a0f4d12ff76a90d374bd53ef3898a7081e7e3e618c8b492d1ae6f29b1f3065640d7571960c9532c981e405baa1e8165dbda883bafdce |
+| [keadm-v1.6.0-linux-amd64.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.0/keadm-v1.6.0-linux-arm.tar.gz) |  19.8 MB | d8380609b540888e3df114141c282245ed79f1978fde575ccb23db5fd11daa52f171824c2723b7c9545ff48c48b960f13d9fee899b48500041e8e4261f27f587 |
+| [keadm-v1.6.0-linux-amd64.tar.gz](https://github.com/kubeedge/kubeedge/releases/download/v1.6.0/keadm-v1.6.0-linux-amd64.tar.gz) |  11.6 MB | bb05c20a875eececd34dc20285e1d992c18cbe3a3c66affd421c4ff44873ccf0853a0b0627612d981b8d03dc75dfc57b2aabcc786ac284e38e7876265ff81457 |
 
 
 ## KubeEdge v1.6 Release Notes

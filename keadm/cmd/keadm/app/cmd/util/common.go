@@ -21,6 +21,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -63,7 +64,9 @@ const (
 
 	EdgeRootDir = "/var/lib/edged"
 
-	KubeEdgeCRDDownloadURL = "https://raw.githubusercontent.com/kubeedge/kubeedge/master/build/crds"
+	SystemdBootPath = "/run/systemd/system"
+
+	KubeEdgeCRDDownloadURL = "https://raw.githubusercontent.com/kubeedge/kubeedge/release-%s/build/crds"
 
 	latestReleaseVersionURL = "https://kubeedge.io/latestversion"
 	RetryTimes              = 5
@@ -305,7 +308,7 @@ func installKubeEdge(options types.InstallOptions, arch string, version semver.V
 		fmt.Println(cmd.GetStdOut())
 	} else if options.ComponentType == types.EdgeCore {
 		untarFileAndMoveEdgeCore = fmt.Sprintf("cd %s && tar -C %s -xvzf %s && cp %s/%s/edge/%s %s/",
-			options.TarballPath, options.TarballPath, filename, options.TarballPath, dirname, KubeEdgeBinaryName, KubeEdgePath)
+			options.TarballPath, options.TarballPath, filename, options.TarballPath, dirname, KubeEdgeBinaryName, KubeEdgeUsrBinPath)
 		cmd := NewCommand(untarFileAndMoveEdgeCore)
 		if err := cmd.Exec(); err != nil {
 			return err
@@ -420,14 +423,20 @@ func isEdgeCoreServiceRunning(serviceName string) (bool, error) {
 }
 
 // check if systemd exist
+// if command run failed, then check it by sd_booted
 func hasSystemd() bool {
 	cmd := "file /sbin/init"
 
-	if err := NewCommand(cmd).Exec(); err != nil {
+	if err := NewCommand(cmd).Exec(); err == nil {
+		return true
+	}
+	// checks whether `SystemdBootPath` exists and is a directory
+	// reference http://www.freedesktop.org/software/systemd/man/sd_booted.html
+	fi, err := os.Lstat(SystemdBootPath)
+	if err != nil {
 		return false
 	}
-
-	return true
+	return fi.IsDir()
 }
 
 func checkSum(filename, checksumFilename string, version semver.Version, tarballPath string) (bool, error) {
@@ -439,15 +448,31 @@ func checkSum(filename, checksumFilename string, version semver.Version, tarball
 	}
 
 	fmt.Printf("%s content: \n", checksumFilename)
-	getDesiredCheckSum := NewCommand(fmt.Sprintf("wget -qO- %s/v%s/%s", KubeEdgeDownloadURL, version, checksumFilename))
-	if err := getDesiredCheckSum.Exec(); err != nil {
-		return false, err
+	checksumFilepath := fmt.Sprintf("%s/%s", tarballPath, checksumFilename)
+
+	if _, err := os.Stat(checksumFilepath); err == nil {
+		fmt.Printf("Expected or Default checksum file %s is already downloaded. \n", checksumFilename)
+		content, err := ioutil.ReadFile(checksumFilepath)
+		if err != nil {
+			return false, err
+		}
+		checksum := strings.Replace(string(content), "\n", "", -1)
+		if checksum != getActualCheckSum.GetStdOut() {
+			fmt.Printf("Failed to verify the checksum of %s ... \n\n", filename)
+			return false, nil
+		}
+	} else {
+		getDesiredCheckSum := NewCommand(fmt.Sprintf("wget -qO- %s/v%s/%s", KubeEdgeDownloadURL, version, checksumFilename))
+		if err := getDesiredCheckSum.Exec(); err != nil {
+			return false, err
+		}
+
+		if getDesiredCheckSum.GetStdOut() != getActualCheckSum.GetStdOut() {
+			fmt.Printf("Failed to verify the checksum of %s ... \n\n", filename)
+			return false, nil
+		}
 	}
 
-	if getDesiredCheckSum.GetStdOut() != getActualCheckSum.GetStdOut() {
-		fmt.Printf("Failed to verify the checksum of %s ... \n\n", filename)
-		return false, nil
-	}
 	return true, nil
 }
 

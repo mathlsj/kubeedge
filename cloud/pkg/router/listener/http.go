@@ -15,6 +15,8 @@ import (
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/utils"
 )
 
+const MaxMessageBytes = 12 * (1 << 20)
+
 var (
 	RestHandlerInstance = &RestHandler{}
 )
@@ -51,8 +53,7 @@ func (rh *RestHandler) Serve() {
 	}
 	klog.Infof("router server listening in %d...", rh.port)
 	//err := server.ListenAndServeTLS("", "")
-	err := server.ListenAndServe()
-	if err != nil {
+	if err := server.ListenAndServe(); err != nil {
 		klog.Errorf("start rest endpoint failed, err: %v", err)
 	}
 }
@@ -98,8 +99,7 @@ func (rh *RestHandler) httpHandler(w http.ResponseWriter, r *http.Request) {
 		// URL format incorrect
 		klog.Warningf("url format incorrect: %s", r.URL.String())
 		w.WriteHeader(http.StatusNotFound)
-		_, err := w.Write([]byte("Request error"))
-		if err != nil {
+		if _, err := w.Write([]byte("Request error")); err != nil {
 			klog.Errorf("Response write error: %s, %s", r.RequestURI, err.Error())
 		}
 		return
@@ -109,8 +109,7 @@ func (rh *RestHandler) httpHandler(w http.ResponseWriter, r *http.Request) {
 	if !exist {
 		klog.Warningf("URL format incorrect: %s", r.RequestURI)
 		w.WriteHeader(http.StatusNotFound)
-		_, err := w.Write([]byte("Request error"))
-		if err != nil {
+		if _, err := w.Write([]byte("Request error")); err != nil {
 			klog.Errorf("Response write error: %s, %s", r.RequestURI, err.Error())
 		}
 		return
@@ -125,12 +124,14 @@ func (rh *RestHandler) httpHandler(w http.ResponseWriter, r *http.Request) {
 		klog.Errorf("invalid convert to Handle. match path: %s", matchPath)
 		return
 	}
-	b, err := ioutil.ReadAll(r.Body)
+	aReaderCloser := http.MaxBytesReader(w, r.Body, MaxMessageBytes)
+	b, err := ioutil.ReadAll(aReaderCloser)
 	if err != nil {
 		klog.Errorf("request error, write result: %v", err)
 		w.WriteHeader(http.StatusBadRequest)
-		_, err = w.Write([]byte("Request error,body is null"))
-		klog.Errorf("Response write error: %s, %s", r.RequestURI, err.Error())
+		if _, err = w.Write([]byte("Request error,body is null")); err != nil {
+			klog.Errorf("Response write error: %s, %s", r.RequestURI, err.Error())
+		}
 		return
 	}
 
@@ -144,9 +145,7 @@ func (rh *RestHandler) httpHandler(w http.ResponseWriter, r *http.Request) {
 
 		v, err := handle(params)
 		if err != nil {
-			//w.WriteHeader(http.StatusInternalServerError)
-			//_, err := w.Write([]byte(err.Error()))
-			//klog.Warningf("operation timeout, msg id: %s, write result: %v", msgID, err)
+			klog.Errorf("handle request error, msg id: %s, err: %v", msgID, err)
 			return
 		}
 		response, ok := v.(*http.Response)
@@ -160,8 +159,7 @@ func (rh *RestHandler) httpHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.WriteHeader(response.StatusCode)
-		_, err = w.Write(body)
-		if err != nil {
+		if _, err = w.Write(body); err != nil {
 			klog.Errorf("response body write error, msg id: %s, reason: %v", msgID, err)
 			return
 		}

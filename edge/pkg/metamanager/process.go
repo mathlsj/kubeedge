@@ -10,6 +10,7 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/beehive/pkg/common/util"
+	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	cloudmodules "github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
@@ -60,6 +61,10 @@ func sendToEdged(message *model.Message, sync bool) {
 }
 
 func sendToEdgeMesh(message *model.Message, sync bool) {
+	// if edgeMesh module disabled, then return
+	if _, ok := core.GetModules()[modules.EdgeMeshModuleName]; !ok {
+		return
+	}
 	if sync {
 		beehiveContext.SendResp(*message)
 	} else {
@@ -666,16 +671,17 @@ func (m *metaManager) runMetaManager() {
 		for {
 			select {
 			case <-beehiveContext.Done():
-				klog.Warning("MetaManager mainloop stop")
+				klog.Warning("MetaManager main loop stop")
 				return
 			default:
 			}
-			if msg, err := beehiveContext.Receive(m.Name()); err == nil {
-				klog.V(2).Infof("get a message %+v", msg)
-				m.process(msg)
-			} else {
+			msg, err := beehiveContext.Receive(m.Name())
+			if err != nil {
 				klog.Errorf("get a message %+v: %v", msg, err)
+				continue
 			}
+			klog.V(2).Infof("get a message %+v", msg)
+			m.process(msg)
 		}
 	}()
 }
